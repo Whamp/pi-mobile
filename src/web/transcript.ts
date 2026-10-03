@@ -1,6 +1,7 @@
 import type { JsonValue } from "@earendil-works/chord";
 import type { AssistantMessage, ImageContent, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { AgentState, ConversationView, InboxState, LiveState, ToolSlot } from "@earendil-works/pi-durable";
+import { type Author, SPEAKER_PREFIX } from "../shared/sharing.ts";
 
 // Pure display model of a Durable view: tool calls are joined with their live
 // slot and result entry, so one card follows a call from request to result.
@@ -15,7 +16,7 @@ export type ToolView = {
 	images: ImageContent[];
 };
 export type Item =
-	| { type: "user"; key: string; text: string; images: ImageContent[]; files: string[] }
+	| { type: "user"; key: string; text: string; author?: Author; images: ImageContent[]; files: string[] }
 	| { type: "assistant"; key: string; message: AssistantMessage; tools: ToolView[]; streaming: boolean }
 	| { type: "marker"; key: string; label: string; detail?: string }
 	| { type: "tool"; key: string; tool: ToolView };
@@ -59,6 +60,31 @@ export function splitAttachments(value: string): { text: string; files: string[]
 	return { text: value.slice(0, match.index), files };
 }
 
+// Only the separate first block is assigned by the worker. Never scan user text
+// for a marker: a forged header in the body remains ordinary text. Upstream #10407.
+export function attributedInput(content: string | readonly { type: string; text?: string }[]): {
+	text: string;
+	author?: Author;
+} {
+	if (typeof content !== "string" && content[0]?.type === "text" && content[0].text?.startsWith(SPEAKER_PREFIX)) {
+		try {
+			const author: unknown = JSON.parse(content[0].text.slice(SPEAKER_PREFIX.length, -"</mobile-speaker>".length));
+			if (
+				author &&
+				typeof author === "object" &&
+				"kind" in author &&
+				(author.kind === "owner" || author.kind === "guest") &&
+				"id" in author &&
+				typeof author.id === "string" &&
+				"name" in author &&
+				typeof author.name === "string"
+			)
+				return { text: text(content.slice(1)), author: author as Author };
+		} catch {}
+	}
+	return { text: text(content) };
+}
+
 export function buildTranscript(view: ConversationView): Transcript {
 	const live = view.docs["pi.live"] as unknown as LiveState | undefined;
 	const inbox = view.docs["pi.inbox"] as unknown as InboxState | undefined;
@@ -83,7 +109,8 @@ export function buildTranscript(view: ConversationView): Transcript {
 		} else if (message?.role === "user") {
 			const images =
 				typeof message.content === "string" ? [] : message.content.filter((part) => part.type === "image");
-			items.push({ type: "user", key, images, ...splitAttachments(text(message.content)) });
+			const attributed = attributedInput(message.content);
+			items.push({ type: "user", key, images, author: attributed.author, ...splitAttachments(attributed.text) });
 		} else if (message?.role === "assistant") {
 			const tools = message.content.flatMap((part): ToolView[] => {
 				if (part.type !== "toolCall") return [];
@@ -130,7 +157,9 @@ export function buildTranscript(view: ConversationView): Transcript {
 		working: busy && !partial && !live?.tools?.some((slot) => slot.status === "running"),
 		...(live?.generation?.retry ? { retry: live.generation.retry } : {}),
 		queued: (inbox?.items ?? []).flatMap((item) =>
-			item.mode === "write" ? [] : [{ id: item.id, mode: item.mode, text: text(item.content as string) }],
+			item.mode === "write"
+				? []
+				: [{ id: item.id, mode: item.mode, text: attributedInput(item.content as string).text }],
 		),
 		agent: (view.docs["pi.agent"] ?? {}) as AgentState,
 	};

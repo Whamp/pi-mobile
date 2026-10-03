@@ -1,17 +1,20 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { posix, resolve } from "node:path";
 import { type ModelRef, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { WebSocket, WebSocketServer } from "ws";
 import { processLock } from "../shared/process-lock.ts";
 import { type ClientAction, errorMessage, type ServerEvent, type SessionSummary } from "../shared/protocol.ts";
 import { type ResourceOptions, Resources } from "../shared/resources.ts";
+import type { GuestAccess } from "../shared/sharing.ts";
 import { Catalog, defaultDataDirectory } from "./catalog.ts";
 import { requestOrigin } from "./hosts.ts";
-import { cookieName, createMobileServer } from "./http.ts";
+import { createMobileServer } from "./http.ts";
 import { Logins } from "./login.ts";
+import { OwnerAccess } from "./owner-access.ts";
 import { parseRequest } from "./requests.ts";
+import { Shares } from "./shares.ts";
 import { MAX_UPLOAD_BYTES, UploadError, Uploads } from "./uploads.ts";
 import { createWeb } from "./web.ts";
 import { type WorkerOptions, Workers } from "./workers.ts";
@@ -22,7 +25,7 @@ export type AppOptions = WorkerOptions & {
 	createModels?: ResourceOptions["createModels"];
 	loginTimeoutMs?: number;
 	web?: boolean;
-	/** Tunnel hosts (HTTPS, authenticated by the tunnel) besides loopback. */
+	/** HTTPS tunnel hosts besides loopback. The app authenticates owner/guest access. */
 	allowedHosts?: string[];
 };
 
@@ -38,7 +41,9 @@ export async function createApp(options: AppOptions = {}) {
 	}
 	const workers = new Workers(catalog, options);
 	const uploads = new Uploads(directory);
-	const token = randomBytes(32).toString("hex");
+	const ownerAccess = await OwnerAccess.open(directory);
+	const token = ownerAccess.token;
+	const shares = new Shares(catalog);
 	const remoteHosts = options.allowedHosts ?? [];
 	const nonce = randomBytes(24).toString("hex");
 	let web: Awaited<ReturnType<typeof createWeb>> | undefined;
@@ -64,6 +69,8 @@ export async function createApp(options: AppOptions = {}) {
 			void (async () => {
 				const query = new URL(request.url ?? "/", "http://localhost").searchParams;
 				const sessionId = query.get("session") ?? "";
+				const guest = ownerAccess.authorized(request) ? undefined : shares.fromRequest(request);
+				if (guest && (!guest.canSend || guest.sessionId !== sessionId)) throw new UploadError(403, "Forbidden");
 				catalog.get(sessionId);
 				const name = query.get("name") ?? "";
 				if (!name || name.length > 255) throw new UploadError(400, "Invalid file name");
@@ -77,9 +84,43 @@ export async function createApp(options: AppOptions = {}) {
 			});
 		},
 		remoteHosts,
+		(request, response, target) => {
+			const owner = ownerAccess.authorized(request);
+			if (shares.http(request, response, target, nonce, owner)) return true;
+			const guest = owner ? undefined : shares.fromRequest(request);
+			if (guest) {
+				const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+				if (pathname.includes("%") || pathname.includes("\\")) {
+					response.writeHead(403);
+					response.end("Invalid path");
+					return true;
+				}
+				const path = posix.normalize(pathname);
+				const sessionPath = `/s/${guest.sessionId}`;
+				if (
+					(request.method === "GET" || request.method === "HEAD") &&
+					(path === "/" ||
+						path === sessionPath ||
+						path.startsWith(`${sessionPath}/a/`) ||
+						path.startsWith("/src/web/") ||
+						path === "/src/shared/sharing.ts" ||
+						path.startsWith("/node_modules/.vite/") ||
+						path === "/@vite/client" ||
+						path === "/@react-refresh" ||
+						path === "/node_modules/vite/dist/client/env.mjs")
+				)
+					return false;
+				if (request.method === "POST" && path === "/upload" && guest.canSend) return false;
+				response.writeHead(403);
+				response.end("Forbidden");
+				return true;
+			}
+			return ownerAccess.gate(request, response, target, nonce);
+		},
+		(request) => ownerAccess.authorized(request) || shares.fromRequest(request)?.canSend === true,
 	);
 	const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, perMessageDeflate: false });
-	const clients = new Map<WebSocket, { id: string; pending: number; remote: boolean }>();
+	const clients = new Map<WebSocket, { id: string; pending: number; remote: boolean; guest?: GuestAccess }>();
 	let closing: Promise<void> | undefined;
 	const defaultModel = options.defaultModel ?? (options.fake ? { provider: "faux", modelId: "faux-1" } : undefined);
 	const resources = new Resources({ directory, fake: options.fake, createModels: options.createModels });
@@ -107,11 +148,65 @@ export async function createApp(options: AppOptions = {}) {
 	function list(archived?: boolean): SessionSummary[] {
 		return catalog.list(archived).map((session) => ({ ...session, worker: workers.status(session.id) }));
 	}
-	function broadcastCatalog(): void {
-		for (const socket of clients.keys()) send(socket, { type: "catalog", sessions: list() });
+	function shareInfo(sessionId: string) {
+		const share = shares.get(sessionId);
+		if (!share) return null;
+		const address = http.address();
+		const origin = remoteHosts[0]
+			? `https://${remoteHosts[0]}`
+			: `http://127.0.0.1:${address && typeof address !== "string" ? address.port : 0}`;
+		return { ...share, url: `${origin}/join/${share.token}` };
 	}
+	function listFor(guest?: GuestAccess): SessionSummary[] {
+		if (!guest) return list();
+		return list()
+			.filter((session) => session.id === guest.sessionId)
+			.map((session) => ({
+				...session,
+				worker: { running: session.worker.running, tasks: session.worker.tasks, busy: session.worker.busy },
+			}));
+	}
+	function broadcastCatalog(): void {
+		for (const [socket, client] of clients) send(socket, { type: "catalog", sessions: listFor(client.guest) });
+	}
+	function refreshGuests(): void {
+		for (const [socket, client] of clients)
+			if (client.guest) {
+				const next = shares.access(client.guest.id);
+				if (!next) {
+					workers.unview(client.id);
+					socket.close(1008, "This share has ended");
+					continue;
+				}
+				if (JSON.stringify(next) !== JSON.stringify(client.guest)) {
+					client.guest = next;
+					send(socket, { type: "access", access: next });
+				}
+			}
+	}
+	const shareSweep = setInterval(refreshGuests, 1000);
+	shareSweep.unref();
 	const unsubscribe = workers.subscribe((event) => {
 		for (const [socket, client] of clients) {
+			if (client.guest) {
+				if (!shares.access(client.guest.id)) {
+					socket.close(1008, "This share has ended");
+					continue;
+				}
+				if (event.type === "catalog") {
+					send(socket, { type: "catalog", sessions: listFor(client.guest) });
+					continue;
+				}
+				if (event.type === "worker") {
+					if (event.sessionId === client.guest.sessionId)
+						send(socket, {
+							...event,
+							status: { running: event.status.running, tasks: event.status.tasks, busy: event.status.busy },
+						});
+					continue;
+				}
+				if ("sessionId" in event && event.sessionId !== client.guest.sessionId) continue;
+			}
 			if (event.type === "view" || event.type === "snapshot") {
 				// Only the one conversation this client currently views.
 				const viewer = workers.viewer(client.id);
@@ -122,25 +217,28 @@ export async function createApp(options: AppOptions = {}) {
 	});
 
 	const stopResources = resources.subscribe(() => {
-		for (const socket of clients.keys()) send(socket, { type: "resources", state: resources.snapshot() });
+		for (const [socket, client] of clients)
+			if (!client.guest) send(socket, { type: "resources", state: resources.snapshot() });
 	});
 
 	http.on("upgrade", (request, socket, head) => {
 		const target = requestOrigin(request, remoteHosts);
-		const cookies = request.headers.cookie?.split(";").map((part) => part.trim()) ?? [];
+		const owner = ownerAccess.authorized(request);
+		const guest = owner ? undefined : shares.fromRequest(request);
 		const path = (request.url ?? "/").split("?")[0];
 		if (
 			(path !== "/ws" && !(options.web && path === "/__vite_hmr")) ||
 			!target ||
 			(request.headers.origin !== undefined && request.headers.origin !== target.origin) ||
-			!cookies.includes(`${cookieName(target.port)}=${token}`)
+			(!owner && !guest) ||
+			(path === "/__vite_hmr" && !owner)
 		) {
 			socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
 			return;
 		}
 		if (path === "/__vite_hmr") return; // Vite handles this after the same local-cookie/origin gate.
 		sockets.handleUpgrade(request, socket, head, (connection) =>
-			sockets.emit("connection", connection, target.remote),
+			sockets.emit("connection", connection, target.remote, guest),
 		);
 	});
 
@@ -148,7 +246,40 @@ export async function createApp(options: AppOptions = {}) {
 		const client = clients.get(socket);
 		if (closing) throw new Error("Server is shutting down");
 		if (!client) throw new Error("Client disconnected");
+		if (client.guest) {
+			const guest = shares.access(client.guest.id);
+			if (!guest) throw new Error("This share has ended");
+			client.guest = guest;
+			if (!["list", "open", "heartbeat", "prompt", "abort"].includes(input.type)) throw new Error("Forbidden");
+			if ("sessionId" in input && input.sessionId !== null && input.sessionId !== guest.sessionId)
+				throw new Error("Forbidden");
+			if (input.type === "prompt" && !guest.canSend) throw new Error("View only");
+			if (input.type === "abort" && (!guest.canStop || input.background)) throw new Error("Stop is not permitted");
+			shares.seen(guest.id);
+		}
+		if (
+			(input.type === "open" || input.type === "prompt" || input.type === "abort") &&
+			input.conversationId !== undefined &&
+			input.conversationId !== ROOT_CONVERSATION_ID &&
+			!catalog.get(input.sessionId).subagents.some((agent) => agent.conversationId === input.conversationId)
+		)
+			throw new Error("Unknown conversation");
 		switch (input.type) {
+			case "shareGet":
+				return shareInfo(input.sessionId);
+			case "shareSet": {
+				shares.set(input.sessionId, input.settings, input.reset ?? false);
+				refreshGuests();
+				return shareInfo(input.sessionId);
+			}
+			case "shareRevoke":
+				shares.revoke(input.sessionId);
+				refreshGuests();
+				return;
+			case "shareGuest":
+				shares.guest(input.sessionId, input.guestId, input.muted, input.removed);
+				refreshGuests();
+				return shareInfo(input.sessionId);
 			case "login":
 				// Provider login stays on localhost (design decision); tunnels only use credentials.
 				if (client.remote)
@@ -172,7 +303,7 @@ export async function createApp(options: AppOptions = {}) {
 				await resources.saveSettings(input.settings);
 				return resources.snapshot();
 			case "list":
-				return list(input.archived ?? false);
+				return client.guest ? listFor(client.guest) : list(input.archived ?? false);
 			case "create": {
 				const model = input.model ?? resources.settings.defaultModel ?? defaultModel;
 				if (!model) throw new Error("Select a model or configure PI_MOBILE_PROVIDER and PI_MOBILE_MODEL");
@@ -252,7 +383,17 @@ export async function createApp(options: AppOptions = {}) {
 			case "prompt": {
 				// Only IDs cross the socket; paths come from files this server wrote.
 				const attachments = await uploads.resolve(input.sessionId, input.attachments ?? []);
-				return { submissionId: await workers.command(input.sessionId, input, attachments) };
+				if (client.guest && !shares.access(client.guest.id)?.canSend) throw new Error("View only");
+				return {
+					submissionId: await workers.command(
+						input.sessionId,
+						input,
+						attachments,
+						client.guest
+							? { kind: "guest", id: client.guest.id, name: client.guest.name }
+							: { kind: "owner", id: "owner", name: "Owner" },
+					),
+				};
 			}
 			case "abort":
 			case "reset":
@@ -260,10 +401,11 @@ export async function createApp(options: AppOptions = {}) {
 		}
 	}
 
-	sockets.on("connection", (socket, remote: boolean) => {
-		const client = { id: randomUUID(), pending: 0, remote: remote === true };
+	sockets.on("connection", (socket, remote: boolean, guest?: GuestAccess) => {
+		const client = { id: randomUUID(), pending: 0, remote: remote === true, guest };
 		clients.set(socket, client);
-		send(socket, { type: "catalog", sessions: list() });
+		send(socket, { type: "access", access: guest ?? { kind: "owner" } });
+		send(socket, { type: "catalog", sessions: listFor(guest) });
 		socket.on("error", () => socket.terminate());
 		socket.on("close", () => {
 			workers.unview(client.id);
@@ -297,6 +439,7 @@ export async function createApp(options: AppOptions = {}) {
 
 	function close(): Promise<void> {
 		closing ??= (async () => {
+			clearInterval(shareSweep);
 			unsubscribe();
 			stopResources();
 			await logins.close();
@@ -314,11 +457,12 @@ export async function createApp(options: AppOptions = {}) {
 			});
 			await workers.close();
 			await httpClosed;
+			shares.close();
 			catalog.close();
 			await unlock();
 		})();
 		return closing;
 	}
 	if (options.web) web = await createWeb(http, nonce, remoteHosts);
-	return { http, catalog, workers, resources, logins, web, close };
+	return { http, catalog, workers, resources, logins, web, ownerAccess, shares, close };
 }

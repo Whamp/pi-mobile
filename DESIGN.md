@@ -19,7 +19,7 @@ Keep the implementation small: simple primitives, plain typed messages, no specu
 - No dependency on `pi-coding-agent`, and do not use Pi's server/client packages.
 - Copy and simplify relevant coding-agent implementations with attribution and their useful tests when needed; do not copy its overloaded settings manager.
 - No MCP/codemode initially. Durable's basic coding tools suffice.
-- GitHub repository: private `badlogic/pi-mobile`, created and configured as `origin`. No source has been committed or pushed yet.
+- GitHub repository: private `badlogic/pi-mobile`, created and configured as `origin`. Source is committed and pushed; development continues on main.
 
 Suggested layout:
 
@@ -152,8 +152,8 @@ Automatic reload is a requirement, not a manual `/reload` workflow:
 - Pi-inspired tool rendering: compact call summaries, running/success/error states, expandable output, edit diffs, and images where supported.
 - Artifact tool/panel for HTML, SVG, and documents. Artifacts should be persisted/updateable and previews isolated from chat/credentials.
 - Interactive artifact-to-agent messaging and artifact scope are not yet decided.
-- Vite HMR updates UI sources during agent work. Backend restarts disconnect clients and kill workers; reconnect/open restores Durable work without duplicate prompts.
-- Remote access only through an authenticating HTTPS tunnel whose host is listed in `PI_MOBILE_ALLOWED_HOSTS`; the tunnel is the authentication. Tunnel connections are marked remote, and provider login is refused for them.
+- Vite HMR updates UI sources during agent work. `npm run dev` supervises the backend outside all workers; backend/shared/worker source changes gracefully recycle the server and resume all previously running workers, including unviewed/background sessions, without resubmitting prompts. Browsers reconnect from snapshots. Normal `npm start` still starts no workers. See DEV.md.
+- Remote HTTPS hosts are listed in `PI_MOBILE_ALLOWED_HOSTS`. The app requires owner authentication before serving remote UI/assets, uploads or WebSockets; ngrok Basic auth is no longer needed. The local UI hands out one-time owner tokens. The public landing page asks for that token; it expires after ten minutes and is consumed through same-origin POST, never placed in a URL. Secure/HttpOnly/SameSite cookies persist for 30 days using a private owner key. Localhost remains trusted, but forwarded localhost Host headers are rejected. Provider login remains device-only. Session sharing is implemented separately: reusable links, per-browser unverified names/stable IDs, view/send/upload/Stop permissions, expiry and revoke/reset/mute/remove. Server-side authorization scopes HTTP/uploads/WS actions and events to that session and its subagents. Send can invoke unrestricted agent tools; it is not filesystem isolation.
 
 ## Subagents
 
@@ -161,6 +161,7 @@ Automatic reload is a requirement, not a manual `/reload` workflow:
 - Configure model, thinking level, and offered tools per subagent.
 - Background tasks count toward worker liveness even when the browser disconnects.
 - Implemented in `src/worker/subagents.ts`; the catalog records each session's subagents for the sidebar. Subagent conversations are not search-indexed yet.
+- Owners and send-authorized guests can prompt/steer/queue follow-ups directly in child conversations. Direct browser input remains in that child; tool-created background reporters still relay their answers to the parent. Session/subagent URLs support back/forward navigation.
 - Conversation watches are on demand: the server keeps one worker watch per conversation some client views, and each connection views exactly one conversation. Switching sessions/subagents releases the old watch.
 
 ## First implementation milestone

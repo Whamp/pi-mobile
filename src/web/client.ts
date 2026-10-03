@@ -3,6 +3,7 @@ import type { ConversationView } from "@earendil-works/pi-durable";
 import type { LoginEvent, LoginPrompt } from "../shared/login-protocol.ts";
 import type { ClientAction, ServerEvent, SessionSummary } from "../shared/protocol.ts";
 import type { ResourceSnapshot } from "../shared/resources.ts";
+import type { Access } from "../shared/sharing.ts";
 
 export type LoginView = {
 	attemptId: string;
@@ -14,6 +15,7 @@ export type LoginView = {
 };
 export type MobileState = {
 	connected: boolean;
+	access?: Access;
 	sessions: SessionSummary[];
 	resources?: ResourceSnapshot;
 	activeId?: string;
@@ -62,8 +64,15 @@ export class MobileClient {
 			if (this.state.connected && this.state.activeId)
 				void this.request({ type: "heartbeat", sessionId: this.state.activeId }).catch(() => {});
 		}, 15_000);
+		window.addEventListener("popstate", this.navigate);
 		void this.connect();
 	}
+	private readonly navigate = () => {
+		const match = /^\/s\/([^/]+)(?:\/a\/(\d+))?$/.exec(location.pathname);
+		if (match?.[1])
+			void this.open(match[1], Number(match[2] ?? 1), false).catch((error: Error) => this.setError(error.message));
+		else if (this.state.access?.kind !== "guest") this.leave(false);
+	};
 
 	private async connect(): Promise<void> {
 		const generation = ++this.generation;
@@ -86,21 +95,11 @@ export class MobileClient {
 			socket.onopen = () => {
 				if (this.socket !== socket) return;
 				this.update({ connected: true });
-				void this.request<ResourceSnapshot>({ type: "resources" })
-					.then((resources) => this.update({ resources }))
-					.catch((error: Error) => this.setError(error.message));
-				let activeId = this.state.activeId;
-				try {
-					activeId ??= localStorage.getItem("pi-mobile-session") ?? undefined;
-				} catch {}
-				if (activeId)
-					void this.open(activeId, this.state.activeId ? this.state.conversationId : 1).catch((error: Error) => {
-						if (!this.state.activeId) this.leave();
-						this.setError(error.message);
-					});
+				// The server sends access before catalog. Initialize after that event,
+				// never request owner resources on a guest connection.
 			};
 			socket.onerror = () => socket.close();
-			socket.onclose = () => {
+			socket.onclose = (event) => {
 				if (this.socket !== socket) return;
 				this.update({ connected: false, login: undefined });
 				for (const pending of this.pending.values()) {
@@ -108,6 +107,10 @@ export class MobileClient {
 					pending.reject(new Error("Connection lost. Check the transcript before retrying input."));
 				}
 				this.pending.clear();
+				if (event.code === 1008 && this.state.access?.kind === "guest") {
+					this.update({ view: undefined, sessions: [], error: "This share has ended." });
+					return;
+				}
 				this.scheduleReconnect();
 			};
 		} catch {
@@ -126,6 +129,33 @@ export class MobileClient {
 
 	private receive(event: ServerEvent): void {
 		switch (event.type) {
+			case "access": {
+				const initial = this.state.access === undefined || !this.state.view;
+				this.update({ access: event.access, ...(event.access.kind === "guest" ? { resources: undefined } : {}) });
+				if (event.access.kind === "owner")
+					void this.request<ResourceSnapshot>({ type: "resources" })
+						.then((resources) => this.update({ resources }))
+						.catch((error: Error) => this.setError(error.message));
+				if (initial || this.state.activeId) {
+					const route = /^\/s\/([^/]+)(?:\/a\/(\d+))?$/.exec(location.pathname);
+					let id = this.state.activeId;
+					let conversation = this.state.conversationId;
+					if (route?.[1]) {
+						id = route[1];
+						conversation = Number(route[2] ?? 1);
+					}
+					if (event.access.kind === "guest") {
+						if (id !== event.access.sessionId) conversation = 1;
+						id = event.access.sessionId;
+					} else if (!id) {
+						try {
+							id = localStorage.getItem("pi-mobile-session") ?? undefined;
+						} catch {}
+					}
+					if (id) void this.open(id, conversation, false).catch((error: Error) => this.setError(error.message));
+				}
+				break;
+			}
 			case "result": {
 				const pending = this.pending.get(event.id);
 				this.pending.delete(event.id);
@@ -202,27 +232,31 @@ export class MobileClient {
 
 	// The server keeps exactly one watched conversation per connection; opening
 	// another releases the previous one.
-	async open(sessionId: string, conversationId = 1): Promise<void> {
+	async open(sessionId: string, conversationId = 1, navigate = true): Promise<void> {
 		if (sessionId !== this.state.activeId || conversationId !== this.state.conversationId)
 			this.update({ view: undefined, activeId: sessionId, conversationId });
 		await this.request({ type: "open", sessionId, conversationId });
+		const path = `/s/${sessionId}${conversationId === 1 ? "" : `/a/${conversationId}`}`;
+		if (navigate && location.pathname !== path) history.pushState(null, "", path);
 		try {
 			localStorage.setItem("pi-mobile-session", sessionId);
 		} catch {}
 	}
 
 	// Leave the current session for the new-session screen; the worker keeps running.
-	leave(): void {
+	leave(navigate = true): void {
 		if (this.state.activeId && this.state.connected)
 			void this.request({ type: "heartbeat", sessionId: null }).catch(() => {});
 		try {
 			localStorage.removeItem("pi-mobile-session");
 		} catch {}
+		if (navigate && location.pathname !== "/") history.pushState(null, "", "/");
 		this.update({ activeId: undefined, conversationId: 1, view: undefined });
 	}
 
 	stop(): void {
 		this.stopped = true;
+		window.removeEventListener("popstate", this.navigate);
 		this.generation++;
 		clearTimeout(this.retry);
 		clearInterval(this.heartbeat);

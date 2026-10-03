@@ -21,6 +21,10 @@ export function parseRequest(value: unknown): ClientRequest {
 	const action = object(request.action);
 	if (
 		![
+			"shareGet",
+			"shareSet",
+			"shareRevoke",
+			"shareGuest",
 			"login",
 			"loginAnswer",
 			"cancelLogin",
@@ -65,6 +69,23 @@ export function parseRequest(value: unknown): ClientRequest {
 		string(action.sessionId, "sessionId");
 	}
 	switch (action.type) {
+		case "shareSet": {
+			const settings = object(action.settings);
+			boolean(settings.canSend, "canSend");
+			boolean(settings.canStop, "canStop");
+			if (
+				settings.expiresAt !== null &&
+				(!Number.isSafeInteger(settings.expiresAt) || Number(settings.expiresAt) <= Date.now())
+			)
+				throw new Error("Invalid expiry");
+			boolean(action.reset, "reset", true);
+			break;
+		}
+		case "shareGuest":
+			string(action.guestId, "guestId");
+			boolean(action.muted, "muted");
+			boolean(action.removed, "removed");
+			break;
 		case "login":
 			string(action.providerId, "providerId");
 			if (action.authType !== "api_key" && action.authType !== "oauth") throw new Error("Invalid authType");
@@ -136,6 +157,11 @@ export function parseRequest(value: unknown): ClientRequest {
 			boolean(action.archived, "archived", true);
 			break;
 		case "prompt":
+			if (
+				action.conversationId !== undefined &&
+				(!Number.isSafeInteger(action.conversationId) || Number(action.conversationId) < 1)
+			)
+				throw new Error("Invalid conversationId");
 			if (
 				action.attachments !== undefined &&
 				(!Array.isArray(action.attachments) ||

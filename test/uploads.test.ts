@@ -93,10 +93,10 @@ test(
 			const user = current.views.get(session.id)?.entries.find((entry) => entry.kind === "pi.user")
 				?.model?.[0] as UserMessage;
 			assert(Array.isArray(user.content));
-			const note = user.content[0];
+			const note = user.content[1];
 			assert(note?.type === "text" && note.text.includes(text.path) && note.text.includes(image.path));
 			// The fake model accepts images, so the PNG is also inlined.
-			const inline = user.content[1];
+			const inline = user.content[2];
 			assert(inline?.type === "image" && inline.mimeType === "image/png" && inline.data === PNG.toString("base64"));
 			assert.equal(await readFile(text.path, "utf8"), "uploaded-sentinel\n");
 		} finally {

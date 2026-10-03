@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { requestOrigin } from "./hosts.ts";
+import { type RequestOrigin, requestOrigin } from "./hosts.ts";
 
 const page = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -32,6 +32,8 @@ export function createMobileServer(
 	web?: { nonce: string; handle: Handler },
 	upload?: Handler,
 	remoteHosts: readonly string[] = [],
+	gate?: (request: IncomingMessage, response: ServerResponse, target: RequestOrigin) => boolean,
+	authorizeUpload?: (request: IncomingMessage) => boolean,
 ) {
 	return createServer((req, res) => {
 		const target = requestOrigin(req, remoteHosts);
@@ -55,11 +57,15 @@ export function createMobileServer(
 			res.end("Invalid origin");
 			return;
 		}
+		if (gate?.(req, res, target)) return;
 		// State-changing requests need the local cookie and an exact same-origin
 		// Origin header; a cross-site form cannot satisfy either.
 		if (req.method === "POST" && upload && req.url?.startsWith("/upload?")) {
 			const cookies = req.headers.cookie?.split(";").map((part) => part.trim()) ?? [];
-			if (!token || !cookies.includes(`${cookieName(port)}=${token}`) || !req.headers.origin) {
+			if (
+				!(authorizeUpload ? authorizeUpload(req) : token && cookies.includes(`${cookieName(port)}=${token}`)) ||
+				!req.headers.origin
+			) {
 				res.writeHead(403);
 				res.end("Forbidden");
 				return;
@@ -72,7 +78,7 @@ export function createMobileServer(
 			res.end();
 			return;
 		}
-		if (req.url === "/" && token && req.headers["sec-fetch-site"] !== "cross-site") {
+		if (req.url === "/" && token && !target.remote && req.headers["sec-fetch-site"] !== "cross-site") {
 			const secure = target.remote ? "; Secure" : "";
 			res.setHeader("Set-Cookie", `${cookieName(port)}=${token}; HttpOnly; SameSite=Strict; Path=/${secure}`);
 		}

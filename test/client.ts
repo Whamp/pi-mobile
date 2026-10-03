@@ -24,8 +24,10 @@ export class Client {
 		{ resolve: (data: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
 	>();
 
-	constructor(url: string, cookie: string) {
-		this.socket = new WebSocket(`${url.replace("http:", "ws:")}/ws`, { headers: { Cookie: cookie, Origin: url } });
+	constructor(url: string, cookie: string, headers: Record<string, string> = {}) {
+		this.socket = new WebSocket(`${url.replace("http:", "ws:")}/ws`, {
+			headers: { Cookie: cookie, Origin: url, ...headers },
+		});
 		this.socket.on("message", (data) => {
 			const event = JSON.parse(data.toString()) as ServerEvent;
 			this.events.push(event);

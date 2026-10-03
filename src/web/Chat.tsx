@@ -269,11 +269,25 @@ function ItemView({ item }: { item: Item }) {
 	switch (item.type) {
 		case "user": {
 			// Subagent answers arrive as follow-up inputs; show them as reports.
-			const report = /^\[subagent (\S+) ([^\]]*)\] ?([\s\S]*)$/.exec(item.text);
+			const report = !item.author && /^\[subagent (\S+) ([^\]]*)\] ?([\s\S]*)$/.exec(item.text);
 			if (report) return <Report name={report[1] ?? ""} status={report[2] ?? ""} text={report[3] ?? ""} />;
 			return (
-				<div className="user">
+				<div className={`user ${item.author?.kind === "guest" ? "guest-message" : ""}`}>
 					<div className="bubble">
+						{item.author && (
+							<div
+								className="speaker"
+								style={
+									item.author.kind === "guest"
+										? {
+												color: `hsl(${[...item.author.id].reduce((n, c) => (n * 31 + c.charCodeAt(0)) % 360, 0)} 65% 55%)`,
+											}
+										: undefined
+								}
+							>
+								{item.author.kind === "owner" ? "Owner" : `${item.author.name} · guest`}
+							</div>
+						)}
 						{item.text}
 						{item.files.length > 0 && (
 							<div className="bubble-files">

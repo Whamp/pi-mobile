@@ -11,6 +11,8 @@ npm install --ignore-scripts
 npm start
 ```
 
+For self-editing development, use `npm run dev`: frontend edits use Vite HMR; server/shared/worker edits recycle the backend and resume every previously running worker from Durable state. Manual restart: `kill -USR2 "$PI_MOBILE_DEV_SUPERVISOR_PID"`. See [DEV.md](DEV.md) for the full workflow and recovery limitations.
+
 Open http://127.0.0.1:8787. Override the port with `PORT=9000`; `PORT=0` chooses a free port. Data lives under `~/.pi/mobile/`; override it with `PI_MOBILE_DATA_DIR`.
 
 Open **Providers** in the session drawer to sign in. A new session starts when you send the first message; pick its directory on the start screen. The model chip in the composer changes model and thinking level, including mid-session (the next request uses it). **Use this model for new sessions** in the session menu saves defaults. Optional API environment defaults:
@@ -31,13 +33,27 @@ Fake mode supplies a fake base catalog (explicitly configured custom providers c
 
 The server binds only IPv4 loopback. Host/origin checks and a per-server HttpOnly/SameSite cookie protect browser agent actions; any other Host header is rejected (DNS rebinding). Other local processes are trusted.
 
-**Tunnels.** Pi Mobile has no login of its own. To reach it remotely, put an authenticating HTTPS tunnel in front (e.g. ngrok with a basic-auth traffic policy) and allow its host:
+**Tunnels.** Allow the HTTPS tunnel host and sign in using a one-time owner token. Ngrok basic auth is not required:
 
 ```sh
 PI_MOBILE_ALLOWED_HOSTS=pim.ngrok.pro npm start   # comma-separated
 ```
 
-Allowed hosts are treated as `https://<host>` origins: the cookie gets `Secure`, WebSockets must come from that exact origin, and Vite HMR works through the tunnel. Anyone past the tunnel's authentication controls the agent, including shell commands. Provider login is refused over tunnel connections and stays available only at http://127.0.0.1.
+Allowed hosts are treated as `https://<host>` origins. Remote UI/assets, uploads and WebSockets require an owner or session-scoped guest cookie; anonymous visitors see a sign-in-required page, not a Basic-auth prompt. The cookie is HttpOnly/SameSite=Strict/Secure and lasts 30 days. Localhost still grants owner access automatically; forwarded requests cannot impersonate localhost.
+
+On the phone, open the local UI's sidebar and choose **Sign in another device → Copy token**. Open Pi's domain on the other device, paste the token into the landing page, and tap **Sign in**. Tokens expire after ten minutes and work once. The local `GET /owner-token` endpoint generates them using the localhost owner cookie; tokens are never put in URLs. At startup a token is also saved privately in `~/.pi/mobile/owner-token.txt` (0600). Claiming requires same-origin POST and consumes the token once. The private `owner-key` file persists the owner credential across server restarts. Anyone signed in as owner controls the agent, including shell commands. Provider login stays device-only. Owner access is separate from session-scoped guest sharing below.
+
+## Sharing
+
+Open a session → **Session options → Share session…**. Create a reusable link and copy it. The configured public HTTPS host is used automatically; without one, the link is local-only. Each guest chooses a name and receives an independent browser identity. Names are unverified; badges and colours distinguish guests from the owner.
+
+Default access is view-only. **Allow sending messages and uploads** enables prompting, steering and follow-ups in the main conversation and all its subagents. **Allow stopping the current run** is independent. Sending can make the agent execute shell commands or read/write files; this is **not filesystem isolation**. Guests cannot create sessions, search other sessions, change models/settings, manage providers, archive/reset/kill workers, or access owner tokens.
+
+Permissions update on existing connections. Expiry/revoke disconnect guests; resetting changes the link and disconnects every old guest. Mute disables sending and stopping while retaining viewing. Removal blocks that browser identity, not a person: anyone still holding a reusable link can join from another browser. Reset/revoke the link to prevent rejoining. Already downloaded messages cannot be taken back, and admitted work is not cancelled by changing access.
+
+Share tokens and hashed guest credentials persist privately in `shares.sqlite` across backend restarts. Shared URLs contain the bearer share token; treat the link and tunnel request logs as sensitive. Owner sign-in tokens remain single-use and are never put in URLs.
+
+Session and subagent views have URLs (`/s/<session-id>`, `/s/<session-id>/a/<conversation-id>`), including browser back/forward navigation. An owner cookie always takes precedence over a guest cookie in the same browser.
 
 ## Implemented
 
@@ -59,7 +75,7 @@ Artifacts remain unimplemented. Markdown is a small safe subset (no tables or HT
 
 ## Subagents
 
-The agent has a `subagent` tool (adapted from Durable's background-subagent example): `spawn` with `name`, `message`, optional `model` (`provider/modelId`), `thinkingLevel` (clamped to the model) and `tools` (subset of read/write/edit/bash); `send` (steer, or `followUp`); `stop`; `status`; and `models` (models with configured credentials). Subagents are background Durable conversations: the main agent's Stop doesn't reach them, they keep the worker alive, survive restarts, cannot spawn subagents, and report each answer back to the main conversation as a follow-up input. The sidebar lists them under their session; opening one shows its transcript, configuration and a stop button. Search indexes the main conversation only.
+The agent has a `subagent` tool (adapted from Durable's background-subagent example): `spawn` with `name`, `message`, optional `model` (`provider/modelId`), `thinkingLevel` (clamped to the model) and `tools` (subset of read/write/edit/bash); `send` (steer, or `followUp`); `stop`; `status`; and `models` (models with configured credentials). Subagents are background Durable conversations: the main agent's Stop doesn't reach them, they keep the worker alive, survive restarts, cannot spawn subagents, and report each answer back to the main conversation as a follow-up input. The sidebar lists them under their session; opening one shows its transcript, configuration, composer and stop button (subject to guest permissions). Direct browser inputs stay in that child conversation; tool-submitted requests still use the existing parent reporter. Search indexes the main conversation only.
 
 Durable's tool API does not expose the Harness `Models` yet (earendil-works/pi#10395), so the worker passes its instance to the tool.
 
@@ -113,14 +129,14 @@ Actions and events are defined in `src/shared/protocol.ts`:
 - `login` with `providerId`/`authType`, `loginAnswer` with `attemptId`/`promptId`/`value`, and `cancelLogin` bridge provider interaction. `logout` removes stored credentials; `refreshModels` explicitly refreshes a provider catalog. Owner-only `login` events are defined in `src/shared/login-protocol.ts`.
 - `resources` reads non-secret configuration/model status. `setSettings` replaces the validated settings object and persists it; workers observe the file independently.
 - `heartbeat` with the opened `sessionId`, every ~15 seconds; `sessionId: null` leaves the view.
-- `prompt` with `content`, `requestId`, and optional `whenBusy: "steer" | "followUp" | "reject"`.
+- `prompt` with `content`, `requestId`, and optional `conversationId` and `whenBusy: "steer" | "followUp" | "reject"`.
 - `configure` with optional `model`/`thinkingLevel` changes a session's agent; in-flight requests keep their configuration.
 - `open` takes an optional `conversationId` (subagent conversations from the session's `subagents`). Each connection watches exactly one conversation; opening another or `heartbeat` with `sessionId: null` releases the previous worker watch.
 - `prompt` accepts `attachments`: IDs returned by `POST /upload?session=<id>&name=<file>` (raw body, 25 MB limit, local cookie and same-origin `Origin` required).
 - `abort` cancels foreground work; optional `background: true` includes background work. `stop` kills the worker, preserving unfinished tasks. `reset` starts a new context without deleting history.
 - `rebuildIndex` rebuilds one session's derived text index.
 
-Connections receive a `catalog` event. `open` sends a `snapshot`, then `view` events with exact Chord `ops`; apply these with `applyImmutable` from `@earendil-works/chord/delta`. A new snapshot replaces the old view. `worker` events report ephemeral PID/task/error state, including worker resource errors. `resources` events publish the server's own non-secret resource snapshot when it changes. Reopen after a stopped worker or reconnect to obtain fresh state. Search returns matching session metadata plus up to 100 message hits; `archived: true` searches archived sessions separately.
+Connections first receive `access` (owner or scoped guest), then a `catalog` event. Owner-only `shareGet`, `shareSet`, `shareGuest`, and `shareRevoke` manage sharing. Guest catalogs/events/actions are filtered server-side to the shared session; resource/provider events are never emitted to guests. `open` sends a `snapshot`, then `view` events with exact Chord `ops`; apply these with `applyImmutable` from `@earendil-works/chord/delta`. A new snapshot replaces the old view. `worker` events report ephemeral PID/task/error state, including worker resource errors. `resources` events publish the server's own non-secret resource snapshot when it changes. Reopen after a stopped worker or reconnect to obtain fresh state. Search returns matching session metadata plus up to 100 message hits; `archived: true` searches archived sessions separately.
 
 Example from the localhost page's browser console, with fake mode enabled:
 

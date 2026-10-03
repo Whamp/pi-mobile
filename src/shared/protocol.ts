@@ -4,6 +4,7 @@ import type { ConversationView, ModelRef } from "@earendil-works/pi-durable";
 import type { LoginEvent } from "./login-protocol.ts";
 import type { ResourceError, ResourceSnapshot } from "./resources.ts";
 import type { MobileSettings } from "./settings.ts";
+import type { Access, Author, ShareSettings } from "./sharing.ts";
 
 export type Attachment = { id: string; name: string; path: string; size: number; mimeType?: string };
 export type SubagentInfo = {
@@ -56,6 +57,7 @@ export type WorkerAction =
 	| {
 			type: "prompt";
 			content: string;
+			conversationId?: number;
 			requestId: string;
 			whenBusy?: "steer" | "followUp" | "reject";
 			/** Upload IDs from POST /upload; the server resolves them to files. */
@@ -66,7 +68,7 @@ export type WorkerAction =
 	| { type: "reset" };
 export type WorkerCommand =
 	| { type: "init"; session: SessionInfo; storagePath: string; fake: boolean; resume: boolean }
-	| { type: "command"; id: string; action: WorkerAction; attachments?: Attachment[] }
+	| { type: "command"; id: string; action: WorkerAction; attachments?: Attachment[]; author?: Author }
 	| { type: "watch"; id: string; conversationId: number }
 	| { type: "unwatch"; conversationId: number }
 	| { type: "indexed"; id: string; error?: string };
@@ -81,6 +83,9 @@ export type WorkerEvent =
 	| { type: "fatal"; error: string };
 
 export type ClientAction =
+	| { type: "shareGet" | "shareRevoke"; sessionId: string }
+	| { type: "shareSet"; sessionId: string; settings: ShareSettings; reset?: boolean }
+	| { type: "shareGuest"; sessionId: string; guestId: string; muted: boolean; removed: boolean }
 	| { type: "login"; providerId: string; authType: AuthType }
 	| { type: "loginAnswer"; attemptId: string; promptId: string; value: string }
 	| { type: "cancelLogin"; attemptId: string }
@@ -99,6 +104,7 @@ export type ClientAction =
 	| ({ sessionId: string } & WorkerAction);
 export type ClientRequest = { id: string; action: ClientAction };
 export type ServerEvent =
+	| { type: "access"; access: Access }
 	| { type: "login"; event: LoginEvent }
 	| { type: "result"; id: string; data?: unknown; error?: string }
 	| { type: "catalog"; sessions: SessionSummary[] }

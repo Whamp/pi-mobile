@@ -5,7 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"start": "node src/server/main.ts",
-		"dev": "node --watch src/server/main.ts",
+		"dev": "node scripts/dev.mjs",
 		"build": "tsc",
 		"check": "node scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node scripts/biome-check.mjs --write",

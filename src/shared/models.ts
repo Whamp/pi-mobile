@@ -7,6 +7,7 @@ import {
 	fauxThinking,
 	fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
+import { SPEAKER_PREFIX } from "./sharing.ts";
 
 // Explicit demo/test mode. Responses depend on committed input, not a volatile
 // queue position, so reopening an interrupted request is deterministic.
@@ -23,8 +24,11 @@ export function createMobileModels(fake: boolean, options: CreateModelsOptions =
 					const text =
 						typeof user?.content === "string"
 							? user.content
-							: (user?.content
-									.filter((part) => part.type === "text")
+							: ((user?.content[0]?.type === "text" && user.content[0].text.startsWith(SPEAKER_PREFIX)
+									? user.content.slice(1)
+									: user?.content
+								)
+									?.filter((part) => part.type === "text")
 									.map((part) => part.text)
 									.join("\n") ?? "");
 					const last = transcript.messages.at(-1);

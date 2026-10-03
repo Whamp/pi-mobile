@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { SearchResults, SessionSummary } from "../shared/protocol.ts";
+import type { GuestAccess } from "../shared/sharing.ts";
 import type { MobileClient } from "./client.ts";
 import { ArchiveIcon, FolderIcon, KeyIcon, PinIcon, PlusIcon, SearchIcon } from "./icons.tsx";
 
@@ -25,6 +26,8 @@ export function Drawer({
 	onOpen,
 	onNew,
 	onProviders,
+	onOwnerLink,
+	guest,
 }: {
 	client: MobileClient;
 	sessions: SessionSummary[];
@@ -34,12 +37,14 @@ export function Drawer({
 	onOpen: (id: string, conversationId?: number) => void;
 	onNew: () => void;
 	onProviders: () => void;
+	onOwnerLink: () => void;
+	guest?: GuestAccess;
 }) {
 	const [query, setQuery] = useState("");
 	const [archived, setArchived] = useState(false);
 	const [results, setResults] = useState<SearchResults>();
 	useEffect(() => {
-		if (!connected || !query.trim()) {
+		if (guest || !connected || !query.trim()) {
 			setResults(undefined);
 			return;
 		}
@@ -54,7 +59,7 @@ export function Drawer({
 			current = false;
 			clearTimeout(timer);
 		};
-	}, [client, query, archived, connected]);
+	}, [client, query, archived, connected, guest]);
 	const ids = results ? new Set(results.sessions.map((session) => session.id)) : undefined;
 	const visible = sessions.filter(
 		(session) => Boolean(session.archivedAt) === archived && (!ids || ids.has(session.id)),
@@ -72,6 +77,48 @@ export function Drawer({
 			.request({ type: "restore", sessionId: id })
 			.then(() => onOpen(id))
 			.catch((error: Error) => client.setError(error.message));
+	if (guest)
+		return (
+			<nav className="drawer-content" aria-label="Shared session">
+				<div className="drawer-top">
+					<div className="brand">
+						<span className="logo">π</span>
+						<span>Shared session</span>
+					</div>
+				</div>
+				<p className="muted empty-note">
+					Joined as <strong>{guest.name}</strong>
+					<br />
+					{guest.canSend ? "Can send messages" : "View only"}
+					{guest.canStop ? " · Can stop runs" : ""}
+				</p>
+				<div className="session-scroll">
+					{sessions.map((session) => (
+						<div className="session-row" key={session.id}>
+							<button
+								type="button"
+								className={`session-main ${conversationId === 1 ? "active" : ""}`}
+								onClick={() => onOpen(session.id)}
+							>
+								{session.title}
+							</button>
+							{session.subagents.map((agent) => (
+								<button
+									type="button"
+									className={`subagent-row ${conversationId === agent.conversationId ? "active" : ""}`}
+									key={agent.conversationId}
+									onClick={() => onOpen(session.id, agent.conversationId)}
+								>
+									<span className="branch" />
+									<span className="session-title">{agent.name}</span>
+									{session.worker.busy?.includes(agent.conversationId) && <span className="live-dot" />}
+								</button>
+							))}
+						</div>
+					))}
+				</div>
+			</nav>
+		);
 	return (
 		<nav className="drawer-content" aria-label="Sessions">
 			<div className="drawer-top">
@@ -159,12 +206,15 @@ export function Drawer({
 					</p>
 				)}
 			</div>
-			<div className="drawer-foot">
+			<div className="drawer-foot" style={{ flexWrap: "wrap" }}>
 				<button type="button" className="foot-button" onClick={() => setArchived(!archived)}>
 					<ArchiveIcon /> {archived ? "Back to sessions" : "Archived"}
 				</button>
 				<button type="button" className="foot-button" onClick={onProviders}>
 					<KeyIcon /> Providers
+				</button>
+				<button type="button" className="foot-button" style={{ flexBasis: "100%" }} onClick={onOwnerLink}>
+					<KeyIcon /> Sign in another device
 				</button>
 			</div>
 		</nav>

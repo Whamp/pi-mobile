@@ -34,14 +34,17 @@ test("local placeholder, health, methods and origin/host protection", async () =
 	}
 });
 
-function raw(url: string, headers: Record<string, string>) {
-	return new Promise<{ status?: number; headers: Record<string, unknown> }>((resolve, reject) => {
-		const req = request(url, { headers }, (res) => {
-			res.resume();
-			resolve({ status: res.statusCode, headers: res.headers });
+function raw(url: string, headers: Record<string, string>, method = "GET", body?: string) {
+	return new Promise<{ status?: number; headers: Record<string, unknown>; body: string }>((resolve, reject) => {
+		const req = request(url, { headers, method }, (res) => {
+			let body = "";
+			res.on("data", (chunk: Buffer) => {
+				body += chunk.toString();
+			});
+			res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body }));
 		});
 		req.on("error", reject);
-		req.end();
+		req.end(body);
 	});
 }
 
@@ -53,13 +56,48 @@ test("allowed tunnel hosts: https origin, Secure cookie, other hosts still rejec
 		const address = app.http.address();
 		assert(address && typeof address !== "string");
 		const url = `http://127.0.0.1:${address.port}`;
-		const tunnel = await raw(url, { Host: "pim.example.test" });
+		const anonymous = await raw(url, { Host: "pim.example.test" });
+		assert.equal(anonymous.status, 401);
+		assert(anonymous.body.includes('id="token"'));
+		assert(anonymous.body.includes("One-time token"));
+		assert(!anonymous.body.includes("127.0.0.1:8787"));
+		assert.equal(anonymous.headers["set-cookie"], undefined);
+		assert.equal(anonymous.headers["www-authenticate"], undefined, "no basic-auth prompt");
+		assert.equal((await raw(`${url}/src/web/App.tsx`, { Host: "pim.example.test" })).status, 401);
+		assert.equal(
+			(await raw(url, { "X-Forwarded-For": "192.0.2.1" })).status,
+			403,
+			"a forwarded localhost Host cannot grant owner access",
+		);
+
+		const token = app.ownerAccess.issueToken();
+		assert(token);
+		const claim = {
+			Host: "pim.example.test",
+			Origin: "https://pim.example.test",
+			"Content-Type": "application/json",
+		};
+		assert.equal(
+			(await raw(`${url}/owner/claim`, { ...claim, Origin: "https://evil.test" }, "POST", JSON.stringify({ token })))
+				.status,
+			403,
+		);
+		const signedIn = await raw(`${url}/owner/claim`, claim, "POST", JSON.stringify({ token }));
+		assert.equal(signedIn.status, 200);
+		assert.equal(
+			(await raw(`${url}/owner/claim`, claim, "POST", JSON.stringify({ token }))).status,
+			403,
+			"a token is single-use",
+		);
+		const cookie = String(signedIn.headers["set-cookie"]).split(";")[0] ?? "";
+		const remote = { Host: "pim.example.test", Cookie: cookie };
+		const tunnel = await raw(url, remote);
 		assert.equal(tunnel.status, 200);
-		assert.match(String(tunnel.headers["set-cookie"]), /; Secure/);
+		assert.match(String(signedIn.headers["set-cookie"]), /; Secure/);
 		assert.match(String(tunnel.headers["content-security-policy"]), /connect-src 'self' wss:\/\/pim\.example\.test;/);
 		// Inline user images (base64 data: URLs) and composer previews (blob:) must be loadable.
 		assert.match(String(tunnel.headers["content-security-policy"]), /img-src 'self' data: blob:;/);
-		assert.equal((await raw(url, { Host: "pim.example.test", Origin: "https://pim.example.test" })).status, 200);
+		assert.equal((await raw(url, { ...remote, Origin: "https://pim.example.test" })).status, 200);
 		assert.equal(
 			(await raw(url, { Host: "pim.example.test", Origin: `http://127.0.0.1:${address.port}` })).status,
 			403,
@@ -69,7 +107,6 @@ test("allowed tunnel hosts: https origin, Secure cookie, other hosts still rejec
 		assert.doesNotMatch(String((await raw(url, {})).headers["set-cookie"]), /Secure/);
 
 		// Tunnel WebSockets work, but provider login stays local-only.
-		const cookie = String(tunnel.headers["set-cookie"]).split(";")[0] ?? "";
 		const socket = new WebSocket(`ws://127.0.0.1:${address.port}/ws`, {
 			headers: { Host: "pim.example.test", Origin: "https://pim.example.test", Cookie: cookie },
 		});

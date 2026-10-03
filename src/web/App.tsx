@@ -20,6 +20,8 @@ import {
 } from "./icons.tsx";
 import { LoginPanel } from "./LoginPanel.tsx";
 import { type ModelChoice, ModelPicker, modelName } from "./ModelPicker.tsx";
+import { OwnerToken } from "./OwnerToken.tsx";
+import { Sharing } from "./Sharing.tsx";
 import { Sheet } from "./Sheet.tsx";
 import { buildTranscript } from "./transcript.ts";
 
@@ -33,12 +35,16 @@ async function upload(sessionId: string, file: File): Promise<string> {
 	return result.id;
 }
 
-type Panel = "model" | "providers" | "session" | "cwd" | undefined;
+type Panel = "model" | "providers" | "session" | "cwd" | "owner-token" | "share" | undefined;
 
 export function App() {
 	const client = useMemo(() => new MobileClient(), []);
 	const state = useSyncExternalStore(client.subscribe, client.snapshot, client.snapshot);
 	const { resources, sessions, view, activeId, connected, conversationId } = state;
+	const owner = state.access?.kind === "owner";
+	const guest = state.access?.kind === "guest" ? state.access : undefined;
+	const canSend = owner || guest?.canSend === true;
+	const canStop = owner || guest?.canStop === true;
 	const [drawer, setDrawer] = useState(false);
 	const [panel, setPanel] = useState<Panel>();
 	const [draft, setDraft] = useState("");
@@ -146,8 +152,8 @@ export function App() {
 
 	async function send() {
 		const text = draft.trim();
-		if ((!text && !files.length) || sending || !connected) return;
-		const key = `${text}\u0000${files.map((file) => file.key).join()}`;
+		if ((!text && !files.length) || sending || !connected || !canSend) return;
+		const key = `${activeId ?? "new"}:${conversationId}:${text}\u0000${files.map((file) => file.key).join()}`;
 		if (submission.current?.text !== key) submission.current = { text: key, id: crypto.randomUUID() };
 		const requestId = submission.current.id;
 		setSending(true);
@@ -178,6 +184,7 @@ export function App() {
 				type: "prompt",
 				sessionId,
 				content: text,
+				conversationId,
 				...(attachments.length ? { attachments } : {}),
 				requestId,
 				whenBusy: steer ? "steer" : "followUp",
@@ -197,7 +204,12 @@ export function App() {
 
 	const levelLabel = choice && choice.thinkingLevel !== "off" ? choice.thinkingLevel : undefined;
 	const modelChip = (
-		<button type="button" className="chip" onClick={() => setPanel("model")} disabled={!resources}>
+		<button
+			type="button"
+			className="chip"
+			onClick={() => setPanel("model")}
+			disabled={!resources || !owner || Boolean(subagent)}
+		>
 			<SparkIcon size={14} />
 			<span className="chip-text">{choice ? modelName(resources, choice.model) : "Choose model"}</span>
 			{levelLabel && <span className="chip-sub">{levelLabel}</span>}
@@ -209,12 +221,17 @@ export function App() {
 			<aside className="drawer">
 				<Drawer
 					client={client}
+					guest={guest}
 					sessions={sessions}
 					activeId={activeId}
 					conversationId={conversationId}
 					connected={connected}
 					onOpen={open}
 					onNew={startNew}
+					onOwnerLink={() => {
+						setDrawer(false);
+						setPanel("owner-token");
+					}}
 					onProviders={() => {
 						setDrawer(false);
 						setPanel("providers");
@@ -251,7 +268,7 @@ export function App() {
 						)}
 					</div>
 					{!connected && <span className="offline">Offline</span>}
-					{active && !subagent && (
+					{owner && active && !subagent && (
 						<button
 							type="button"
 							className="icon-button"
@@ -302,14 +319,14 @@ export function App() {
 					)}
 				</div>
 
-				{subagent ? (
+				{subagent && (
 					<div className="composer-wrap">
 						<div className="subagent-bar">
 							<span>
 								{subagent.model} · thinking {subagent.thinkingLevel} · tools{" "}
 								{subagent.tools.join(", ") || "none"}
 							</span>
-							{busy && (
+							{busy && !canSend && canStop && (
 								<button
 									type="button"
 									className="round stop"
@@ -330,7 +347,8 @@ export function App() {
 							)}
 						</div>
 					</div>
-				) : (
+				)}
+				{canSend ? (
 					<div className="composer-wrap">
 						{!atBottom && (
 							<button type="button" className="to-bottom" onClick={toBottom} aria-label="Scroll to bottom">
@@ -419,7 +437,13 @@ export function App() {
 										}}
 									/>
 								</label>
-								{modelChip}
+								{owner ? (
+									modelChip
+								) : (
+									<span className="chip">
+										<span className="chip-text">{guest?.name} · guest</span>
+									</span>
+								)}
 								{busy && (
 									<button
 										type="button"
@@ -430,13 +454,14 @@ export function App() {
 									</button>
 								)}
 								<span className="spacer" />
-								{busy && ((!draft.trim() && !files.length) || sending) ? (
+								{busy && canStop && ((!draft.trim() && !files.length) || sending) ? (
 									<button
 										type="button"
 										className="round stop"
 										aria-label="Stop"
 										onClick={() =>
-											activeId && perform(client.request({ type: "abort", sessionId: activeId }))
+											activeId &&
+											perform(client.request({ type: "abort", sessionId: activeId, conversationId }))
 										}
 									>
 										<StopIcon />
@@ -454,9 +479,32 @@ export function App() {
 							</div>
 						</form>
 					</div>
+				) : (
+					<div className="composer-wrap">
+						<div className="subagent-bar">
+							<span>{guest ? `Joined as ${guest.name} · View only` : "Connecting…"}</span>
+							{busy && canStop && !subagent && (
+								<button
+									type="button"
+									className="round stop"
+									aria-label="Stop"
+									onClick={() =>
+										activeId &&
+										perform(client.request({ type: "abort", sessionId: activeId, conversationId }))
+									}
+								>
+									<StopIcon />
+								</button>
+							)}
+						</div>
+					</div>
 				)}
 			</main>
 
+			{panel === "share" && owner && active && (
+				<Sharing client={client} sessionId={active.id} onClose={() => setPanel(undefined)} />
+			)}
+			{panel === "owner-token" && owner && <OwnerToken onClose={() => setPanel(undefined)} />}
 			{panel === "model" && (
 				<ModelPicker
 					resources={resources}
@@ -483,6 +531,7 @@ export function App() {
 			{panel === "session" && active && (
 				<SessionSheet
 					session={active}
+					onShare={() => setPanel("share")}
 					onClose={() => setPanel(undefined)}
 					onRename={(title) => perform(client.request({ type: "rename", sessionId: active.id, title }))}
 					onPin={() => perform(client.request({ type: "pin", sessionId: active.id, pinned: !active.pinned }))}
@@ -566,6 +615,7 @@ function SessionSheet({
 	onPin,
 	onArchive,
 	onDefault,
+	onShare,
 }: {
 	session: SessionSummary;
 	onClose: () => void;
@@ -573,6 +623,7 @@ function SessionSheet({
 	onPin: () => void;
 	onArchive: () => void;
 	onDefault: () => void;
+	onShare: () => void;
 }) {
 	const [title, setTitle] = useState(session.title);
 	return (
@@ -601,6 +652,9 @@ function SessionSheet({
 				</div>
 			</form>
 			<div className="list">
+				<button type="button" className="row-button" onClick={onShare}>
+					<span>Share session…</span>
+				</button>
 				<button type="button" className="row-button" onClick={onPin}>
 					<span>
 						<PinIcon /> {session.pinned ? "Unpin" : "Pin to top"}

@@ -1,5 +1,7 @@
 # Development Rules
 
+Before development, read [DEV.md](DEV.md) completely for architecture, current limitations, restart/recovery, owner access, ngrok and Chromium workflows. Also read [DESIGN.md](DESIGN.md) and [README.md](README.md); never treat planned features as implemented.
+
 ## Conversational Style
 
 - Keep answers short and concise. No emojis or cheerful filler.

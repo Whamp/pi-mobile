@@ -27,6 +27,14 @@ test(
 			const response = await fetch(url);
 			const html = await response.text();
 			assert.equal(response.status, 200);
+			for (const path of [
+				"/s/12345678-1234-1234-1234-123456789abc",
+				"/s/12345678-1234-1234-1234-123456789abc/a/2",
+			]) {
+				const routed = await fetch(`${url}${path}`);
+				assert.equal(routed.status, 200);
+				assert((await routed.text()).includes("/src/web/main.tsx"), "session and subagent URLs serve the SPA");
+			}
 			assert(html.includes("/src/web/main.tsx"));
 			assert(html.includes("/@vite/client"));
 			assert.match(response.headers.get("content-security-policy") ?? "", /script-src 'self' 'nonce-/);
@@ -36,6 +44,12 @@ test(
 			assert((await main.text()).includes("createRoot"));
 			const appModule = await app.web?.vite.transformRequest("/src/web/App.tsx");
 			assert(appModule?.code.includes("Message Pi"));
+			assert(appModule?.code.includes("OwnerToken"));
+			const drawerModule = await app.web?.vite.transformRequest("/src/web/Drawer.tsx");
+			assert(drawerModule?.code.includes("Sign in another device"));
+			const ownerModule = await app.web?.vite.transformRequest("/src/web/OwnerToken.tsx");
+			assert(ownerModule?.code.includes("/owner-token"));
+			assert(ownerModule?.code.includes("Copy token"));
 			const css = await fetch(`${url}/src/web/style.css`);
 			assert.equal(css.status, 200);
 			for (const path of [

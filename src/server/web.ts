@@ -30,13 +30,17 @@ export async function createWeb(http: Server, nonce: string, remoteHosts: readon
 					"**/models.json",
 					"**/models-store.json",
 					"**/device.json",
+					"**/owner-key",
+					"**/shares.sqlite*",
+					"**/owner-token.txt",
 					"**/*.sqlite*",
 				],
 			},
 		},
 	});
 	function handle(request: IncomingMessage, response: ServerResponse): void {
-		if (request.url === "/") {
+		const path = new URL(request.url ?? "/", "http://localhost").pathname;
+		if (path === "/" || /^\/s\/[a-f\d-]+(?:\/a\/\d+)?$/.test(path)) {
 			void (async () => {
 				const html = await vite.transformIndexHtml(
 					"/",

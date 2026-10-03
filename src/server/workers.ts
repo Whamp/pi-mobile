@@ -12,6 +12,7 @@ import {
 	type WorkerStatus,
 } from "../shared/protocol.ts";
 import type { ResourceError } from "../shared/resources.ts";
+import type { Author } from "../shared/sharing.ts";
 import type { Catalog } from "./catalog.ts";
 
 type WorkerResult = { submissionId?: number; view?: ConversationView };
@@ -374,7 +375,12 @@ export class Workers {
 		this.reconcile(sessionId);
 	}
 
-	async command(id: string, action: WorkerAction, attachments?: Attachment[]): Promise<number | undefined> {
+	async command(
+		id: string,
+		action: WorkerAction,
+		attachments?: Attachment[],
+		author?: Author,
+	): Promise<number | undefined> {
 		const result = await this.serial(id, async () => {
 			const worker = await this.start(id);
 			return {
@@ -382,6 +388,7 @@ export class Workers {
 					type: "command",
 					id: commandId,
 					action,
+					...(author ? { author } : {}),
 					...(attachments?.length ? { attachments } : {}),
 				})),
 			};
