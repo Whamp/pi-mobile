@@ -1,7 +1,7 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { SessionSummary } from "../shared/protocol.ts";
-import { Messages, OpenConversation } from "./Chat.tsx";
+import { ContextUsage, Messages, OpenConversation, UsageLine } from "./Chat.tsx";
 import { MobileClient } from "./client.ts";
 import { Drawer, shortPath } from "./Drawer.tsx";
 import {
@@ -48,7 +48,7 @@ export function App() {
 	const [drawer, setDrawer] = useState(false);
 	const [panel, setPanel] = useState<Panel>();
 	const [draft, setDraft] = useState("");
-	const [steer, setSteer] = useState(false);
+	const [steer, setSteer] = useState(true);
 	const [sending, setSending] = useState(false);
 	const [files, setFiles] = useState<PickedFile[]>([]);
 	const [newCwd, setNewCwd] = useState<string>();
@@ -191,7 +191,7 @@ export function App() {
 			});
 			setDraft("");
 			setFiles([]);
-			setSteer(false);
+			setSteer(true);
 			submission.current = undefined;
 		} catch (error) {
 			client.setError(
@@ -200,6 +200,59 @@ export function App() {
 		} finally {
 			setSending(false);
 		}
+	}
+
+	// Spend covers the whole session; context belongs only to the viewed conversation
+	// and uses the active model's live context limit (including models.json overrides).
+	const contextWindow = resources?.models.find(
+		(model) => model.provider === choice?.model.provider && model.modelId === choice?.model.modelId,
+	)?.contextWindow;
+	const sessionUsage = active && (
+		<div className="session-usage">
+			{active.worker.usage && (
+				<UsageLine usage={active.worker.usage} title="Session total: all conversations, subagents and tools" />
+			)}
+			{transcript && contextWindow !== undefined && contextWindow > 0 && (
+				<>
+					{active.worker.usage && <span className="usage"> · </span>}
+					<ContextUsage used={transcript.contextTokens} limit={contextWindow} />
+				</>
+			)}
+		</div>
+	);
+
+	// Stop withdraws queued steers/follow-ups. The server returns each author's own
+	// items to their connections; prepend them to the composer as one draft.
+	useEffect(
+		() =>
+			client.onRestore((texts) => {
+				setDraft((current) => [...texts, current].filter((part) => part.trim()).join("\n\n"));
+				submission.current = undefined;
+				textarea.current?.focus();
+			}),
+		[client],
+	);
+	function stop() {
+		if (activeId) perform(client.request({ type: "abort", sessionId: activeId, conversationId }));
+	}
+	function editQueued(submissionId: number) {
+		if (!activeId) return;
+		perform(
+			client
+				.request<{ texts: string[] }>({
+					type: "dequeue",
+					sessionId: activeId,
+					conversationId,
+					submissionId,
+					restore: true,
+				})
+				.then(({ texts }) => {
+					if (!texts.length) return;
+					setDraft((current) => [current, ...texts].filter((part) => part.trim()).join("\n\n"));
+					submission.current = undefined;
+					textarea.current?.focus();
+				}),
+		);
 	}
 
 	const levelLabel = choice && choice.thinkingLevel !== "off" ? choice.thinkingLevel : undefined;
@@ -359,7 +412,35 @@ export function App() {
 							<div className="queued">
 								{transcript.queued.map((item) => (
 									<div key={item.id}>
-										<span>{item.mode === "steer" ? "Steer" : "Queued"}</span> {item.text}
+										<button
+											type="button"
+											className="queue-edit"
+											title="Move back to editor"
+											disabled={!canStop}
+											onClick={() => editQueued(item.id)}
+										>
+											<span>{item.mode === "steer" ? "Steer" : "Queued"}</span> {item.text}
+										</button>
+										{canStop && (
+											<button
+												type="button"
+												className="queue-remove"
+												aria-label="Remove from queue"
+												onClick={() =>
+													activeId &&
+													perform(
+														client.request({
+															type: "dequeue",
+															sessionId: activeId,
+															conversationId,
+															submissionId: item.id,
+														}),
+													)
+												}
+											>
+												<CloseIcon />
+											</button>
+										)}
 									</div>
 								))}
 							</div>
@@ -454,19 +535,12 @@ export function App() {
 									</button>
 								)}
 								<span className="spacer" />
-								{busy && canStop && ((!draft.trim() && !files.length) || sending) ? (
-									<button
-										type="button"
-										className="round stop"
-										aria-label="Stop"
-										onClick={() =>
-											activeId &&
-											perform(client.request({ type: "abort", sessionId: activeId, conversationId }))
-										}
-									>
+								{busy && canStop && (
+									<button type="button" className="round stop" aria-label="Stop" onClick={stop}>
 										<StopIcon />
 									</button>
-								) : (
+								)}
+								{(!busy || !canStop || draft.trim() || files.length > 0) && (
 									<button
 										type="submit"
 										className="round send"
@@ -478,6 +552,7 @@ export function App() {
 								)}
 							</div>
 						</form>
+						{sessionUsage}
 					</div>
 				) : (
 					<div className="composer-wrap">

@@ -7,6 +7,8 @@ import type { ConversationView, EntryId } from "@earendil-works/pi-durable";
 import { type ComponentType, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createApp } from "../src/server/app.ts";
+import type { ResourceSnapshot } from "../src/shared/resources.ts";
+import type { matchingModels } from "../src/web/ModelPicker.tsx";
 import type { buildTranscript, Transcript } from "../src/web/transcript.ts";
 import { Client } from "./client.ts";
 
@@ -68,10 +70,46 @@ test(
 			await client.request({ type: "resources" });
 			const chat = (await app.web?.vite.ssrLoadModule("/src/web/Chat.tsx")) as unknown as {
 				Messages: ComponentType<{ transcript: Transcript }>;
+				ContextUsage: ComponentType<{ used: number; limit: number }>;
 			};
 			const model = (await app.web?.vite.ssrLoadModule("/src/web/transcript.ts")) as unknown as {
 				buildTranscript: typeof buildTranscript;
 			};
+			const picker = (await app.web?.vite.ssrLoadModule("/src/web/ModelPicker.tsx")) as unknown as {
+				matchingModels: typeof matchingModels;
+			};
+			const resources: ResourceSnapshot = {
+				version: 1,
+				settings: { defaultModel: { provider: "signed-out", modelId: "sol" } },
+				credentials: [{ providerId: "signed-in", type: "api_key" }],
+				providers: ["signed-in", "signed-out"].map((id) => ({ id, name: id, authMethods: [], loginMethods: [] })),
+				models: ["signed-in", "signed-out"].map((provider) => ({
+					provider,
+					modelId: "sol",
+					name: "Sol",
+					thinkingLevels: ["off"],
+					contextWindow: 500000,
+				})),
+				errors: [],
+			};
+			for (const query of ["", "sol", "SOL", "  sol signed-in  "])
+				assert.deepEqual(
+					picker.matchingModels(resources, query).map((entry) => entry.provider),
+					["signed-in"],
+				);
+			assert.deepEqual(picker.matchingModels(resources, "signed-out"), []);
+			assert.deepEqual(picker.matchingModels({ ...resources, credentials: [] }, "sol"), []);
+			assert.deepEqual(picker.matchingModels(undefined, "sol"), []);
+			assert(
+				renderToStaticMarkup(createElement(chat.ContextUsage, { used: 125000, limit: 500000 })).includes(
+					"25%/500k",
+				),
+			);
+			assert(
+				renderToStaticMarkup(createElement(chat.ContextUsage, { used: 125000, limit: 250000 })).includes(
+					"50%/250k",
+				),
+			);
 			const conversationId = 1 as ConversationView["conversation"]["id"];
 			const assistant = {
 				role: "assistant" as const,
@@ -126,6 +164,69 @@ test(
 			assert(rendered.includes("<strong>bash</strong>"));
 			assert(rendered.includes("ls -la"));
 			assert(rendered.includes("line-two"), "running tool output is previewed while collapsed");
+			assert(
+				rendered.indexOf('class="message-actions"') < rendered.indexOf('class="tool running"'),
+				"Copy belongs to text before tool cards",
+			);
+			assert(!rendered.includes('class="usage"'), "usage is not repeated in the transcript");
+			const measured = {
+				...assistant,
+				usage: { ...assistant.usage, input: 10000, cacheRead: 90000, output: 1000, totalTokens: 101000 },
+			};
+			const measuredEntry = view.entries[1];
+			assert(measuredEntry);
+			const measuredView: ConversationView = {
+				...view,
+				docs: {},
+				entries: [
+					{ ...measuredEntry, model: [measured] },
+					{
+						id: 3 as EntryId,
+						conversationId,
+						kind: "pi.tool-result",
+						model: [
+							{
+								role: "toolResult",
+								toolCallId: "call-1",
+								toolName: "bash",
+								content: [{ type: "text", text: "1234" }],
+								isError: false,
+								timestamp: 3,
+							},
+						],
+					},
+				],
+			};
+			assert.equal(
+				model.buildTranscript(measuredView).contextTokens,
+				101001,
+				"reported usage plus trailing tool output",
+			);
+			assert.equal(
+				model.buildTranscript({
+					...measuredView,
+					entries: [{ id: 4 as EntryId, conversationId, kind: "pi.reset", head: 4 as EntryId }],
+				}).contextTokens,
+				0,
+				"reset clears active context, not historical spend",
+			);
+			const omitted: ConversationView = {
+				...measuredView,
+				entries: [
+					...measuredView.entries,
+					{
+						id: 4 as EntryId,
+						conversationId,
+						kind: "test.edit",
+						edits: [{ target: measuredEntry.id, action: "omit" }],
+					},
+				],
+			};
+			assert.equal(
+				model.buildTranscript(omitted).contextTokens,
+				1,
+				"omitted assistant usage cannot anchor the estimate",
+			);
 			const done = model.buildTranscript({
 				...view,
 				docs: {
@@ -168,6 +269,31 @@ test(
 			const live = done.items[2];
 			assert(live?.type === "assistant" && live.streaming);
 			assert(renderToStaticMarkup(createElement(chat.Messages, { transcript: done })).includes("Streaming partial"));
+			const thinkingView: ConversationView = {
+				...view,
+				entries: [],
+				docs: {
+					"pi.live": {
+						run: { taskId: 1, inputs: [] },
+						generation: {
+							attempt: 1,
+							message: {
+								...assistant,
+								content: [{ type: "thinking", thinking: "hidden live reasoning" }],
+								stopReason: "pending",
+							},
+						},
+					},
+				},
+			};
+			const thinking = renderToStaticMarkup(
+				createElement(chat.Messages, { transcript: model.buildTranscript(thinkingView) }),
+			);
+			assert(thinking.includes('aria-expanded="false"'));
+			assert(
+				!thinking.includes("hidden live reasoning") && !thinking.includes("thinking-body"),
+				"live thinking stays collapsed until opened",
+			);
 			// Fenced code is highlighted as React elements, with copy buttons on code and answers.
 			const markdown = (await app.web?.vite.ssrLoadModule("/src/web/Markdown.tsx")) as unknown as {
 				Markdown: ComponentType<{ text: string }>;

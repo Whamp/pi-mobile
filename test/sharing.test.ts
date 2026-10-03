@@ -118,6 +118,7 @@ test(
 					{ type: "logout", providerId: "faux" },
 					{ type: "prompt", sessionId: session.id, content: "x", requestId: "view" },
 					{ type: "abort", sessionId: session.id },
+					{ type: "dequeue", sessionId: session.id, submissionId: 1, restore: true },
 				] satisfies ClientAction[])
 					await assert.rejects(guest.client.request(action), /Forbidden|View only|not permitted/);
 				assert.equal(
@@ -282,6 +283,83 @@ test(
 				alice.client.request({ type: "abort", sessionId: session.id, background: true }),
 				/not permitted/,
 			);
+
+			// Queue editing returns only successfully withdrawn input; Stop restores
+			// each browser author's remaining messages only to that author's sockets.
+			for (const client of [owner, alice.client, bob.client])
+				await client.request({ type: "open", sessionId: session.id });
+			await until(() => !app.workers.status(session.id).busy?.includes(1));
+			await owner.request({
+				type: "prompt",
+				sessionId: session.id,
+				content: "slow queue test",
+				requestId: "queue-run",
+			});
+			await until(() => app.workers.status(session.id).busy?.includes(1) === true);
+			const editable = await owner.request<{ submissionId: number }>({
+				type: "prompt",
+				sessionId: session.id,
+				content: "editable",
+				requestId: "edit-queued",
+				whenBusy: "followUp",
+			});
+			assert.deepEqual(
+				await owner.request({
+					type: "dequeue",
+					sessionId: session.id,
+					submissionId: editable.submissionId,
+					restore: true,
+				}),
+				{ texts: ["editable"] },
+			);
+			assert.deepEqual(
+				await owner.request({
+					type: "dequeue",
+					sessionId: session.id,
+					submissionId: editable.submissionId,
+					restore: true,
+				}),
+				{ texts: [] },
+				"already withdrawn input is never returned twice",
+			);
+			const removed = await bob.client.request<{ submissionId: number }>({
+				type: "prompt",
+				sessionId: session.id,
+				content: "discarded",
+				requestId: "remove-queued",
+				whenBusy: "followUp",
+			});
+			assert.deepEqual(
+				await bob.client.request({ type: "dequeue", sessionId: session.id, submissionId: removed.submissionId }),
+				{ texts: [] },
+			);
+			for (const [client, content] of [
+				[owner, "owner queued"],
+				[alice.client, "alice queued"],
+				[bob.client, "bob queued"],
+			] as const)
+				await client.request({
+					type: "prompt",
+					sessionId: session.id,
+					content,
+					requestId: content,
+					whenBusy: client === owner ? "steer" : "followUp",
+				});
+			await owner.request({ type: "abort", sessionId: session.id });
+			for (const [client, expected] of [
+				[owner, "owner queued"],
+				[alice.client, "alice queued"],
+				[bob.client, "bob queued"],
+			] as const) {
+				await until(() =>
+					client.events.some((event) => event.type === "restore" && event.texts.includes(expected)),
+				);
+				const restores = client.events.filter((event) => event.type === "restore");
+				assert.deepEqual(
+					restores.flatMap((event) => event.texts),
+					[expected],
+				);
+			}
 
 			await owner.request({
 				type: "shareGuest",

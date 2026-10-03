@@ -1,5 +1,5 @@
 import type { Op } from "@earendil-works/chord/delta";
-import type { AuthType, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { AuthType, ModelThinkingLevel, Usage } from "@earendil-works/pi-ai";
 import type { ConversationView, ModelRef } from "@earendil-works/pi-durable";
 import type { LoginEvent } from "./login-protocol.ts";
 import type { ResourceError, ResourceSnapshot } from "./resources.ts";
@@ -7,6 +7,7 @@ import type { MobileSettings } from "./settings.ts";
 import type { Access, Author, ShareSettings } from "./sharing.ts";
 
 export type Attachment = { id: string; name: string; path: string; size: number; mimeType?: string };
+export type Restored = { author: Author; text: string };
 export type SubagentInfo = {
 	name: string;
 	conversationId: number;
@@ -35,6 +36,8 @@ export type WorkerStatus = {
 	busy?: number[];
 	error?: string;
 	resourceErrors?: ResourceError[];
+	/** Whole-session spend while the worker runs: every conversation, subagents and tools. */
+	usage?: Usage;
 };
 export type SessionSummary = SessionInfo & { worker: WorkerStatus };
 export type IndexedMessage = {
@@ -64,6 +67,8 @@ export type WorkerAction =
 			attachments?: string[];
 	  }
 	| { type: "abort"; background?: boolean; conversationId?: number }
+	/** Withdraw one queued steer/follow-up before it is placed. */
+	| { type: "dequeue"; submissionId: number; conversationId?: number; restore?: boolean }
 	| { type: "configure"; model?: ModelRef; thinkingLevel?: ModelThinkingLevel }
 	| { type: "reset" };
 export type WorkerCommand =
@@ -78,8 +83,17 @@ export type WorkerEvent =
 	| { type: "tasks"; count: number; busy: number[] }
 	| { type: "subagents"; subagents: SubagentInfo[] }
 	| { type: "resources"; errors: ResourceError[] }
+	| { type: "usage"; usage: Usage }
 	| { type: "index"; id: string; messages: IndexedMessage[]; through: number }
-	| { type: "result"; id: string; submissionId?: number; view?: ConversationView; error?: string }
+	| {
+			type: "result";
+			id: string;
+			submissionId?: number;
+			/** Abort: queued inputs withdrawn before stopping, returned to each author's composer. */
+			restored?: Restored[];
+			view?: ConversationView;
+			error?: string;
+	  }
 	| { type: "fatal"; error: string };
 
 export type ClientAction =
@@ -111,7 +125,9 @@ export type ServerEvent =
 	| { type: "resources"; state: ResourceSnapshot }
 	| { type: "snapshot"; sessionId: string; conversationId: number; view: ConversationView }
 	| { type: "view"; sessionId: string; conversationId: number; ops: readonly Op[] }
-	| { type: "worker"; sessionId: string; status: WorkerStatus };
+	| { type: "worker"; sessionId: string; status: WorkerStatus }
+	/** Sent only to the author's own connections: Stop withdrew their queued input. */
+	| { type: "restore"; sessionId: string; conversationId: number; texts: string[] };
 
 export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);

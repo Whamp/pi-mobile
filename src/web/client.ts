@@ -29,6 +29,7 @@ export type MobileState = {
 export class MobileClient {
 	private state: MobileState = { connected: false, sessions: [], conversationId: 1 };
 	private readonly listeners = new Set<() => void>();
+	private readonly restoreListeners = new Set<(texts: string[]) => void>();
 	private readonly pending = new Map<
 		string,
 		{ resolve: (data: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
@@ -43,6 +44,14 @@ export class MobileClient {
 		this.listeners.add(listener);
 		return () => {
 			this.listeners.delete(listener);
+		};
+	};
+
+	/** Queued input of this user withdrawn by someone's Stop, to put back into the composer. */
+	readonly onRestore = (listener: (texts: string[]) => void) => {
+		this.restoreListeners.add(listener);
+		return () => {
+			this.restoreListeners.delete(listener);
 		};
 	};
 
@@ -188,6 +197,9 @@ export class MobileClient {
 				break;
 			case "login":
 				this.loginEvent(event.event);
+				break;
+			case "restore":
+				for (const listener of this.restoreListeners) listener(event.texts);
 				break;
 		}
 	}

@@ -50,6 +50,21 @@ export function ThinkingControl({
 	);
 }
 
+export function matchingModels(resources: ResourceSnapshot | undefined, query: string): Summary[] {
+	const signedIn = new Set(resources?.credentials.map((credential) => credential.providerId));
+	const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+	const providerName = new Map(resources?.providers.map((provider) => [provider.id, provider.name]));
+	return (resources?.models ?? []).filter(
+		(model) =>
+			signedIn.has(model.provider) &&
+			terms.every((term) =>
+				`${model.name} ${model.modelId} ${model.provider} ${providerName.get(model.provider) ?? ""}`
+					.toLowerCase()
+					.includes(term),
+			),
+	);
+}
+
 export function ModelPicker({
 	resources,
 	value,
@@ -64,20 +79,8 @@ export function ModelPicker({
 	onClose: () => void;
 }) {
 	const [query, setQuery] = useState("");
-	const signedIn = new Set(resources?.credentials.map((credential) => credential.providerId));
-	if (value) signedIn.add(value.model.provider);
-	if (resources?.settings.defaultModel) signedIn.add(resources.settings.defaultModel.provider);
-	const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
 	const providerName = new Map(resources?.providers.map((provider) => [provider.id, provider.name]));
-	const matches = (resources?.models ?? []).filter((model) =>
-		terms.length
-			? terms.every((term) =>
-					`${model.name} ${model.modelId} ${model.provider} ${providerName.get(model.provider) ?? ""}`
-						.toLowerCase()
-						.includes(term),
-				)
-			: signedIn.has(model.provider),
-	);
+	const matches = matchingModels(resources, query);
 	const groups = new Map<string, Summary[]>();
 	for (const model of matches.slice(0, 300)) {
 		const group = groups.get(model.provider) ?? [];
@@ -110,16 +113,12 @@ export function ModelPicker({
 					<input
 						value={query}
 						onChange={(event) => setQuery(event.target.value)}
-						placeholder="Search all models"
+						placeholder="Search signed-in models"
 						aria-label="Search models"
 					/>
 				</label>
 			</div>
-			{!terms.length && (
-				<p className="muted small">
-					Showing signed-in providers. Search to find any of {resources?.models.length ?? 0} models.
-				</p>
-			)}
+			<p className="muted small">Only models from signed-in providers are shown.</p>
 			<div className="model-list">
 				{[...groups].map(([provider, models]) => (
 					<section key={provider}>
@@ -145,7 +144,7 @@ export function ModelPicker({
 						})}
 					</section>
 				))}
-				{!groups.size && <p className="muted">No models match. Sign in to a provider or search everything.</p>}
+				{!groups.size && <p className="muted">No models match. Sign in to a provider or change your search.</p>}
 			</div>
 		</Sheet>
 	);

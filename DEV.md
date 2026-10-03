@@ -8,6 +8,8 @@ Implemented: independent Durable session workers; catalog/search; shared setting
 
 Implemented also: session/subagent URLs and back/forward navigation; reusable session-scoped sharing with named guest identities, view/send/upload/Stop permissions, expiry/reset/revoke/mute/remove; server-assigned speaker attribution; writable subagent views. Owner sign-in is separate from guest sharing. Artifacts remain later.
 
+Composer additions: steering is the default, Stop remains available while drafting, queued items can be withdrawn into the editor or discarded, and stopped queued text is delivered to each author's connected browsers. Restored drafts are text-only and neither persisted for offline authors nor tied to the receiving browser's active conversation; concurrent arrivals during Stop can still be discarded. Bottom stats use worker-wide Durable usage across subagents/tools, with an estimated active-context percentage for the viewed model. The model picker only browses/searches providers with stored credentials; live thinking is collapsed by default.
+
 ## Environment
 
 - Termux, Node 26 during development; package minimum Node 22.19. TypeScript runs through Node's strip-only mode; use erasable syntax.
@@ -143,6 +145,6 @@ Delete ad-hoc scripts/profiles/screenshots and stop Chromium afterwards. Don't d
 
 ## Git and deployment
 
-Remote: private `badlogic/pi-mobile`; branch `main`. Do not commit/push unless requested. Stage explicit paths and check diffs for secrets, temporary scripts and runtime data. Don't override another session's edits. No force pushes, broad staging, resets or hook bypasses.
+Remote: `badlogic/pi-mobile`; branch `main`. Do not commit/push unless requested. Stage explicit paths and check diffs for secrets, temporary scripts and runtime data. Don't override another session's edits. No force pushes, broad staging, resets or hook bypasses.
 
 Backend changes require a running server restart; Vite HMR alone only reloads frontend files. Protocol changes must update backend and frontend together or stale server payloads can crash a new UI. In dev mode the supervisor handles backend restart; outside it, validate first and restart the exact server process with the same data directory/environment. Owner cookies persist; one-time tokens in memory do not. Sharing is an application authorization boundary, not a sandbox around tool execution.

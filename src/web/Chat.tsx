@@ -1,4 +1,4 @@
-import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Usage } from "@earendil-works/pi-ai";
 import { createContext, useContext, useState } from "react";
 import { CodeBlock, CopyButton } from "./Code.tsx";
 import {
@@ -13,7 +13,52 @@ import {
 	ToolIcon,
 } from "./icons.tsx";
 import { Markdown } from "./Markdown.tsx";
-import type { Item, ToolView, Transcript } from "./transcript.ts";
+import { cacheHitRate, type Item, type ToolView, type Transcript } from "./transcript.ts";
+
+function tokens(count: number): string {
+	return count < 1000
+		? String(count)
+		: count < 1_000_000
+			? `${(count / 1000).toFixed(1)}k`
+			: `${(count / 1e6).toFixed(2)}M`;
+}
+
+export function ContextUsage({ used, limit }: { used: number; limit: number }) {
+	return (
+		<span
+			className="usage"
+			title={`Estimated active context: ${used.toLocaleString()} / ${limit.toLocaleString()} tokens`}
+		>
+			{Math.round((used / limit) * 100)}%/{tokens(limit).replace(".0k", "k")}
+		</span>
+	);
+}
+
+export function cost(value: number): string {
+	return value >= 1 ? `$${value.toFixed(2)}` : value >= 0.01 ? `$${value.toFixed(3)}` : `$${value.toFixed(4)}`;
+}
+
+/** Compact usage: prompt tokens (cache hit share), output tokens, and cost when priced. */
+export function UsageLine({ usage, title }: { usage: Usage; title?: string }) {
+	const hit = cacheHitRate(usage);
+	const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
+	return (
+		<span
+			className="usage"
+			title={
+				title ??
+				`input ${usage.input} · cache read ${usage.cacheRead} · cache write ${usage.cacheWrite} · output ${usage.output}`
+			}
+		>
+			↑{tokens(prompt)}
+			{hit !== undefined && (
+				<span className={hit >= 0.5 ? "cache-hit" : undefined}> · cache {Math.round(hit * 100)}%</span>
+			)}
+			{" · "}↓{tokens(usage.output)}
+			{usage.cost.total > 0 && ` · ${cost(usage.cost.total)}`}
+		</span>
+	);
+}
 
 /** Opens a subagent conversation of the current session. */
 export const OpenConversation = createContext<(conversationId: number) => void>(() => {});
@@ -179,7 +224,7 @@ function Thinking({ text, live }: { text: string; live: boolean }) {
 					<ChevronIcon size={13} />
 				</span>
 			</button>
-			{(open || live) && <div className={open ? "thinking-body" : "thinking-body clamp"}>{text}</div>}
+			{open && <div className="thinking-body">{text}</div>}
 		</div>
 	);
 }
@@ -213,6 +258,11 @@ function Assistant({
 					return (
 						<div key={key} className={streaming && index === lastText ? "streaming" : undefined}>
 							<Markdown text={part.text} />
+							{index === lastText && answer && !streaming && (
+								<div className="message-actions">
+									<CopyButton text={answer} />
+								</div>
+							)}
 						</div>
 					);
 				if (part.type === "toolCall") {
@@ -233,11 +283,6 @@ function Assistant({
 					{message.stopReason === "aborted"
 						? "Stopped"
 						: message.errorMessage || "The provider returned an error."}
-				</div>
-			)}
-			{answer && !streaming && (
-				<div className="message-actions">
-					<CopyButton text={answer} />
 				</div>
 			)}
 		</div>

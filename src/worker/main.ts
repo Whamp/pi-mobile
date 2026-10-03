@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import type { ImageContent, Usage } from "@earendil-works/pi-ai";
 import {
 	AssistantEntry,
 	type Conversation,
@@ -16,6 +16,8 @@ import {
 	type EntryId,
 	type EntryRecord,
 	Harness,
+	InboxDoc,
+	type SubmissionId,
 	section,
 	type TaskGraph,
 	UserEntry,
@@ -35,7 +37,7 @@ import {
 	type WorkerEvent,
 } from "../shared/protocol.ts";
 import { Resources } from "../shared/resources.ts";
-import { SPEAKER_PREFIX, speakerText } from "../shared/sharing.ts";
+import { type Author, SPEAKER_PREFIX, speakerText } from "../shared/sharing.ts";
 import { createSubagentExtension, type SubagentState, Subagents } from "./subagents.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -97,6 +99,19 @@ async function promptContent(text: string, attachments: readonly Attachment[], r
 	const list = attachments.map((file) => `- ${file.path} (${file.name}, ${file.size} bytes)`).join("\n");
 	const note = `<attachments>\nThe user attached these files:\n${list}\n</attachments>`;
 	return [{ type: "text", text: text.trim() ? `${text}\n\n${note}` : note }, ...images];
+}
+
+// Browser input starts with a worker-written speaker block. Tool-originated input has no author.
+function restoredInput(content: UserInput): { author: Author; text: string } | undefined {
+	if (typeof content === "string") return undefined;
+	const header = content[0];
+	if (header?.type !== "text" || !header.text.startsWith(SPEAKER_PREFIX)) return undefined;
+	const author = JSON.parse(header.text.slice(SPEAKER_PREFIX.length, -"</mobile-speaker>".length)) as Author;
+	const text = content
+		.slice(1)
+		.flatMap((part) => (part.type === "text" ? [part.text] : []))
+		.join("\n");
+	return text.trim() ? { author, text } : undefined;
 }
 
 async function terminate(code: number): Promise<void> {
@@ -270,6 +285,52 @@ async function start(init: Extract<WorkerCommand, { type: "init" }>): Promise<vo
 	// Created on first spawn; poll for it cheaply until it exists.
 	let registryWatch = await harness.watchDoc(Subagents, root.id, context);
 	await send({ type: "resources", errors: localResources.resourceErrors });
+	// Whole-session spend: Durable sums every conversation's pi.usage (models,
+	// compaction and tools), so subagents are included. Coalesced per commit burst.
+	let usagePending = false;
+	const sendUsage = () => {
+		if (usagePending) return;
+		usagePending = true;
+		setTimeout(() => {
+			usagePending = false;
+			void harness
+				.usage(context)
+				.then((state) => {
+					const all = [...Object.values(state.models), ...Object.values(state.tools)];
+					if (!all.length) return;
+					const usage: Usage = {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					};
+					for (const part of all) {
+						usage.input += part.input;
+						usage.output += part.output;
+						usage.cacheRead += part.cacheRead;
+						usage.cacheWrite += part.cacheWrite;
+						usage.totalTokens += part.totalTokens;
+						if (part.cacheWrite1h !== undefined)
+							usage.cacheWrite1h = (usage.cacheWrite1h ?? 0) + part.cacheWrite1h;
+						if (part.reasoning !== undefined) usage.reasoning = (usage.reasoning ?? 0) + part.reasoning;
+						usage.cost.input += part.cost.input;
+						usage.cost.output += part.cost.output;
+						usage.cost.cacheRead += part.cost.cacheRead;
+						usage.cost.cacheWrite += part.cost.cacheWrite;
+						usage.cost.total += part.cost.total;
+					}
+					return send({ type: "usage", usage });
+				})
+				.catch(fatal);
+		}, 250);
+	};
+	harness.subscribeCommits((publication) => {
+		if (publication.changes.some((change) => change.type === "document" && change.record.kind === "pi.usage"))
+			sendUsage();
+	});
+	sendUsage();
 	await send({ type: "subagents", subagents: subagents(registryWatch?.value) });
 	await send({ type: "ready", ...((value) => ({ tasks: value.count, busy: value.busy }))(tasks(graph.value)) });
 	graph.start(async (value) => {
@@ -357,6 +418,7 @@ async function start(init: Extract<WorkerCommand, { type: "init" }>): Promise<vo
 		void (async () => {
 			try {
 				let submissionId: number | undefined;
+				let restored: { author: Author; text: string }[] | undefined;
 				switch (message.action.type) {
 					case "prompt": {
 						const target =
@@ -387,7 +449,33 @@ async function start(init: Extract<WorkerCommand, { type: "init" }>): Promise<vo
 								? root
 								: await harness.conversation(message.action.conversationId as ConversationId, context);
 						if (!target) throw new Error("Unknown conversation");
+						// Conversation.abort() discards queued inputs. Withdraw them first, one by
+						// one, so each author gets their text back; already placed ones are skipped.
+						restored = [];
+						const inbox = await harness.snapshot(InboxDoc, target.id, context);
+						for (const item of inbox?.items ?? []) {
+							if (item.mode === "write") continue;
+							const withdrawn = await harness.abortSubmission(item.id as SubmissionId, context, target.id);
+							if (withdrawn !== "aborted") continue;
+							const input = restoredInput(item.content as UserInput);
+							if (input) restored.push(input);
+						}
 						await target.abort(context, { background: message.action.background ?? false });
+						break;
+					}
+					case "dequeue": {
+						const conversationId = (message.action.conversationId ?? root.id) as ConversationId;
+						const id = message.action.submissionId as SubmissionId;
+						const item = message.action.restore
+							? (await harness.snapshot(InboxDoc, conversationId, context))?.items.find((item) => item.id === id)
+							: undefined;
+						// If it raced into the transcript, don't duplicate it in the editor.
+						const result = await harness.abortSubmission(id, context, conversationId);
+						if (result === "not_found") throw new Error("Unknown queued message");
+						if (result === "aborted" && item && item.mode !== "write") {
+							const input = restoredInput(item.content as UserInput);
+							if (input) restored = [input];
+						}
 						break;
 					}
 					case "reset":
@@ -401,7 +489,12 @@ async function start(init: Extract<WorkerCommand, { type: "init" }>): Promise<vo
 						break;
 					}
 				}
-				await send({ type: "result", id: message.id, ...(submissionId === undefined ? {} : { submissionId }) });
+				await send({
+					type: "result",
+					id: message.id,
+					...(submissionId === undefined ? {} : { submissionId }),
+					...(restored === undefined ? {} : { restored }),
+				});
 			} catch (error) {
 				await send({ type: "result", id: message.id, error: errorMessage(error) });
 			}

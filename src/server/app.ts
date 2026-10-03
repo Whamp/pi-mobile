@@ -163,7 +163,12 @@ export async function createApp(options: AppOptions = {}) {
 			.filter((session) => session.id === guest.sessionId)
 			.map((session) => ({
 				...session,
-				worker: { running: session.worker.running, tasks: session.worker.tasks, busy: session.worker.busy },
+				worker: {
+					running: session.worker.running,
+					tasks: session.worker.tasks,
+					busy: session.worker.busy,
+					usage: session.worker.usage,
+				},
 			}));
 	}
 	function broadcastCatalog(): void {
@@ -201,7 +206,12 @@ export async function createApp(options: AppOptions = {}) {
 					if (event.sessionId === client.guest.sessionId)
 						send(socket, {
 							...event,
-							status: { running: event.status.running, tasks: event.status.tasks, busy: event.status.busy },
+							status: {
+								running: event.status.running,
+								tasks: event.status.tasks,
+								busy: event.status.busy,
+								usage: event.status.usage,
+							},
 						});
 					continue;
 				}
@@ -250,15 +260,18 @@ export async function createApp(options: AppOptions = {}) {
 			const guest = shares.access(client.guest.id);
 			if (!guest) throw new Error("This share has ended");
 			client.guest = guest;
-			if (!["list", "open", "heartbeat", "prompt", "abort"].includes(input.type)) throw new Error("Forbidden");
+			if (!["list", "open", "heartbeat", "prompt", "abort", "dequeue"].includes(input.type))
+				throw new Error("Forbidden");
 			if ("sessionId" in input && input.sessionId !== null && input.sessionId !== guest.sessionId)
 				throw new Error("Forbidden");
 			if (input.type === "prompt" && !guest.canSend) throw new Error("View only");
 			if (input.type === "abort" && (!guest.canStop || input.background)) throw new Error("Stop is not permitted");
+			// Withdrawing queued input cancels work like Stop does.
+			if (input.type === "dequeue" && !guest.canStop) throw new Error("Stop is not permitted");
 			shares.seen(guest.id);
 		}
 		if (
-			(input.type === "open" || input.type === "prompt" || input.type === "abort") &&
+			(input.type === "open" || input.type === "prompt" || input.type === "abort" || input.type === "dequeue") &&
 			input.conversationId !== undefined &&
 			input.conversationId !== ROOT_CONVERSATION_ID &&
 			!catalog.get(input.sessionId).subagents.some((agent) => agent.conversationId === input.conversationId)
@@ -384,20 +397,39 @@ export async function createApp(options: AppOptions = {}) {
 				// Only IDs cross the socket; paths come from files this server wrote.
 				const attachments = await uploads.resolve(input.sessionId, input.attachments ?? []);
 				if (client.guest && !shares.access(client.guest.id)?.canSend) throw new Error("View only");
-				return {
-					submissionId: await workers.command(
-						input.sessionId,
-						input,
-						attachments,
-						client.guest
-							? { kind: "guest", id: client.guest.id, name: client.guest.name }
-							: { kind: "owner", id: "owner", name: "Owner" },
-					),
-				};
+				const { submissionId } = await workers.command(
+					input.sessionId,
+					input,
+					attachments,
+					client.guest
+						? { kind: "guest", id: client.guest.id, name: client.guest.name }
+						: { kind: "owner", id: "owner", name: "Owner" },
+				);
+				return { submissionId };
 			}
-			case "abort":
+			case "abort": {
+				// Queued steers/follow-ups withdrawn by Stop go back to each author's own
+				// connections, never to the stopper or other guests.
+				const { restored = [] } = await workers.command(input.sessionId, input);
+				const byAuthor = Map.groupBy(restored, (item) => item.author.id);
+				for (const [socket, other] of clients) {
+					const texts = byAuthor.get(other.guest?.id ?? "owner")?.map((item) => item.text);
+					if (!texts || (other.guest && other.guest.sessionId !== input.sessionId)) continue;
+					send(socket, {
+						type: "restore",
+						sessionId: input.sessionId,
+						conversationId: input.conversationId ?? ROOT_CONVERSATION_ID,
+						texts,
+					});
+				}
+				return;
+			}
+			case "dequeue": {
+				const { restored = [] } = await workers.command(input.sessionId, input);
+				return { texts: restored.map((item) => item.text) };
+			}
 			case "reset":
-				return { submissionId: await workers.command(input.sessionId, input) };
+				return { submissionId: (await workers.command(input.sessionId, input)).submissionId };
 		}
 	}
 

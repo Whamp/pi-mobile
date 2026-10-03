@@ -45,6 +45,7 @@ export function parseRequest(value: unknown): ClientRequest {
 			"rebuildIndex",
 			"prompt",
 			"abort",
+			"dequeue",
 			"reset",
 			"configure",
 		].includes(String(action.type))
@@ -145,6 +146,13 @@ export function parseRequest(value: unknown): ClientRequest {
 			if (action.conversationId !== undefined && !Number.isSafeInteger(action.conversationId))
 				throw new Error("Invalid conversationId");
 			boolean(action.background, "background", true);
+			break;
+		case "dequeue":
+			if (action.conversationId !== undefined && !Number.isSafeInteger(action.conversationId))
+				throw new Error("Invalid conversationId");
+			if (!Number.isSafeInteger(action.submissionId) || Number(action.submissionId) < 1)
+				throw new Error("Invalid submissionId");
+			boolean(action.restore, "restore", true);
 			break;
 		case "rename":
 			string(action.title, "title");

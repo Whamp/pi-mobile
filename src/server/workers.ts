@@ -1,10 +1,12 @@
 import { type ChildProcess, fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { applyImmutable } from "@earendil-works/chord/delta";
+import type { Usage } from "@earendil-works/pi-ai";
 import type { ConversationView } from "@earendil-works/pi-durable";
 import {
 	type Attachment,
 	errorMessage,
+	type Restored,
 	type ServerEvent,
 	type WorkerAction,
 	type WorkerCommand,
@@ -15,7 +17,7 @@ import type { ResourceError } from "../shared/resources.ts";
 import type { Author } from "../shared/sharing.ts";
 import type { Catalog } from "./catalog.ts";
 
-type WorkerResult = { submissionId?: number; view?: ConversationView };
+type WorkerResult = { submissionId?: number; restored?: Restored[]; view?: ConversationView };
 type RunningWorker = {
 	child: ChildProcess;
 	ready: Promise<void>;
@@ -26,6 +28,7 @@ type RunningWorker = {
 	tasks: number;
 	busy: number[];
 	resourceErrors: ResourceError[];
+	usage?: Usage;
 	booting: boolean;
 	stopping: boolean;
 	pending: Map<string, { resolve: (result: WorkerResult) => void; reject: (error: Error) => void }>;
@@ -82,6 +85,7 @@ export class Workers {
 			tasks: worker?.tasks ?? 0,
 			...(worker?.busy.length ? { busy: worker.busy } : {}),
 			...(worker ? { resourceErrors: worker.resourceErrors } : {}),
+			...(worker?.usage ? { usage: worker.usage } : {}),
 			...(this.errors.has(id) ? { error: this.errors.get(id) } : {}),
 		};
 	}
@@ -204,6 +208,10 @@ export class Workers {
 						current.resourceErrors = event.errors;
 						this.changed(id);
 						break;
+					case "usage":
+						current.usage = event.usage;
+						this.changed(id);
+						break;
 					case "index":
 						try {
 							this.catalog.index(id, event.messages, event.through);
@@ -217,7 +225,8 @@ export class Workers {
 						const pending = current.pending.get(event.id);
 						current.pending.delete(event.id);
 						if (event.error) pending?.reject(new Error(event.error));
-						else pending?.resolve({ submissionId: event.submissionId, view: event.view });
+						else
+							pending?.resolve({ submissionId: event.submissionId, restored: event.restored, view: event.view });
 						this.reconcile(id);
 						break;
 					}
@@ -380,7 +389,7 @@ export class Workers {
 		action: WorkerAction,
 		attachments?: Attachment[],
 		author?: Author,
-	): Promise<number | undefined> {
+	): Promise<{ submissionId?: number; restored?: Restored[] }> {
 		const result = await this.serial(id, async () => {
 			const worker = await this.start(id);
 			return {
@@ -395,7 +404,8 @@ export class Workers {
 		});
 		// Do not hold the lifecycle lock while an abort waits on tool code.
 		// Archive/shutdown must still be able to kill that process.
-		return (await result.result).submissionId;
+		const { submissionId, restored } = await result.result;
+		return { submissionId, restored };
 	}
 
 	unview(clientId: string): void {

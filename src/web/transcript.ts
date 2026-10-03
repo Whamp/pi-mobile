@@ -1,5 +1,6 @@
 import type { JsonValue } from "@earendil-works/chord";
-import type { AssistantMessage, ImageContent, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
+import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { AgentState, ConversationView, InboxState, LiveState, ToolSlot } from "@earendil-works/pi-durable";
 import { type Author, SPEAKER_PREFIX } from "../shared/sharing.ts";
 
@@ -27,7 +28,15 @@ export type Transcript = {
 	retry?: { at: number; error: string };
 	queued: { id: number; mode: string; text: string }[];
 	agent: AgentState;
+	/** Estimated size of the active context, not cumulative usage across requests. */
+	contextTokens: number;
 };
+
+/** Share of prompt tokens served from the provider cache, or undefined without prompt tokens. */
+export function cacheHitRate(usage: Usage): number | undefined {
+	const prompt = usage.input + usage.cacheRead + usage.cacheWrite;
+	return prompt > 0 ? usage.cacheRead / prompt : undefined;
+}
 
 function text(content: string | readonly { type: string; text?: string }[]): string {
 	return typeof content === "string"
@@ -149,6 +158,18 @@ export function buildTranscript(view: ConversationView): Transcript {
 			items.push({ type: "tool", key, tool: resultTool(message) });
 		}
 	}
+	// Views contain the active range after reset/compaction. Apply entry edits as
+	// Durable's model context does; failed/deferred assistant responses are excluded.
+	const edits = new Map(
+		view.entries.flatMap((entry) => (entry.edits ?? []).map((edit) => [edit.target, edit] as const)),
+	);
+	const context = view.entries.flatMap((entry) => {
+		const edit = edits.get(entry.id);
+		if (edit?.action === "omit") return [];
+		return (edit?.action === "replace" ? edit.messages : (entry.model ?? [])).filter(
+			(message) => message.role !== "assistant" || !["aborted", "error", "deferred"].includes(message.stopReason),
+		);
+	});
 	const partial = live?.generation?.message as unknown as AssistantMessage | undefined;
 	if (partial) items.push({ type: "assistant", key: "live", message: partial, tools: [], streaming: true });
 	return {
@@ -162,5 +183,6 @@ export function buildTranscript(view: ConversationView): Transcript {
 				: [{ id: item.id, mode: item.mode, text: attributedInput(item.content as string).text }],
 		),
 		agent: (view.docs["pi.agent"] ?? {}) as AgentState,
+		contextTokens: estimateContextTokens(context).tokens,
 	};
 }
