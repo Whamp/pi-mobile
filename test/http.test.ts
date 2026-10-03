@@ -57,6 +57,8 @@ test("allowed tunnel hosts: https origin, Secure cookie, other hosts still rejec
 		assert.equal(tunnel.status, 200);
 		assert.match(String(tunnel.headers["set-cookie"]), /; Secure/);
 		assert.match(String(tunnel.headers["content-security-policy"]), /connect-src 'self' wss:\/\/pim\.example\.test;/);
+		// Inline user images (base64 data: URLs) and composer previews (blob:) must be loadable.
+		assert.match(String(tunnel.headers["content-security-policy"]), /img-src 'self' data: blob:;/);
 		assert.equal((await raw(url, { Host: "pim.example.test", Origin: "https://pim.example.test" })).status, 200);
 		assert.equal(
 			(await raw(url, { Host: "pim.example.test", Origin: `http://127.0.0.1:${address.port}` })).status,

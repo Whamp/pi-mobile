@@ -42,7 +42,7 @@ export function createMobileServer(
 		res.setHeader("Referrer-Policy", "no-referrer");
 		res.setHeader(
 			"Content-Security-Policy",
-			`default-src 'none'; script-src 'self' ${web ? `'nonce-${web.nonce}'` : ""}; connect-src 'self' ${socketOrigin}; style-src 'self' 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+			`default-src 'none'; script-src 'self' ${web ? `'nonce-${web.nonce}'` : ""}; connect-src 'self' ${socketOrigin}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
 		);
 		// Reject unknown hosts (DNS rebinding) and cross-origin browser requests.
 		if (!target) {
