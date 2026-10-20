@@ -60,6 +60,19 @@ await visit(directory);
 let markdown =
 	"# Codemode restart proof\n\nEvery successful run interrupts bash call 3, retains one submission in conversation 1, resumes calls 4–12 and final cat, and passes P1–P4. Calls have no script timeout.\n\n";
 markdown +=
+	"Three completed real-ten-second repetitions are selected below; failed attempts are listed separately in the full inventory.\n\n| Method | Verified runs | Step 3 line appeared | Duplicates | Resume latency ms |\n|---|---:|---:|---:|---|\n";
+for (const method of ["K1", "K2", "K3", "K3b", "K-pg"]) {
+	const selected = rows.filter(
+		(row) =>
+			row.method === method &&
+			row.pass &&
+			(row.path === `serial-10s/${method}` || row.path === `${method}-10s-2` || row.path === `${method}-10s-3`),
+	);
+	const latency = selected.map((row) => row.resumeLatencyMs).filter((value) => value !== undefined);
+	markdown += `| ${method} | ${selected.length} | ${selected.filter((row) => row.step3Logged).length} | ${selected.reduce((total, row) => total + row.duplicates, 0)} | ${Math.min(...latency)}–${Math.max(...latency)} |\n`;
+}
+markdown += "\nFull inventory, including failed and earlier attempts:\n\n";
+markdown +=
 	"| Bundle | Method | Sleep s | Pass | Interrupted | Step 3 line | Duplicates | Resume to call 4 ms |\n|---|---|---:|---|---:|---|---:|---:|\n";
 for (const row of rows)
 	markdown += `| ${row.path} | ${row.method} | ${row.sleep ?? "unknown"} | ${row.pass ? "PASS" : "FAIL"} | ${row.interruptedStep ?? "before kill"} | ${row.step3Logged ?? "unknown"} | ${row.duplicates ?? "unknown"} | ${row.resumeLatencyMs ?? "unknown"} |\n`;

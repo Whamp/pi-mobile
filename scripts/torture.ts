@@ -74,6 +74,7 @@ export async function runTorture(method: KillMethod, outputDirectory: string, sl
 	let serverLog = "";
 	const knownProcesses = new Set<number>();
 	const observedCalls = new Map<string, string>();
+	let observedWorker = "";
 	const start = async () => {
 		let boot = "";
 		server = spawn(process.execPath, [fileURLToPath(new URL("../src/server/main.ts", import.meta.url))], {
@@ -129,6 +130,12 @@ export async function runTorture(method: KillMethod, outputDirectory: string, sl
 		});
 		event("submitted", { sessionId: id, conversationId: 1, requestId, ...submitted });
 		monitor = setInterval(() => {
+			const worker = client?.workers.get(id);
+			const serializedWorker = JSON.stringify(worker);
+			if (serializedWorker && observedWorker !== serializedWorker) {
+				observedWorker = serializedWorker;
+				event("worker", { status: worker });
+			}
 			const live = client?.views.get(id)?.docs["pi.live"] as unknown as LiveState | undefined;
 			for (const slot of live?.nestedTools ?? []) {
 				const serialized = JSON.stringify(slot);
@@ -139,6 +146,8 @@ export async function runTorture(method: KillMethod, outputDirectory: string, sl
 		}, 10);
 		await until(
 			() => {
+				const worker = client?.workers.get(id);
+				if (worker?.error && !worker.running) throw new Error(worker.error);
 				const live = client?.views.get(id)?.docs["pi.live"] as unknown as LiveState | undefined;
 				return (
 					live?.nestedTools?.some(
