@@ -18,6 +18,8 @@ import android.os.ResultReceiver;
 import android.provider.Settings;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.util.Log;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -51,7 +53,7 @@ public final class MainActivity extends Activity {
         status = new TextView(this);
         status.setText("p2w · Starting the on-device runtime…\nFirst launch unpacks the app. This can take a moment.");
         status.setPadding(24, 32, 24, 24);
-        status.setOnClickListener(view -> requestRuntime());
+        status.setOnClickListener(view -> { requestRuntime(); pollHealth(); });
         layout.addView(status);
         setContentView(layout);
         if (Build.VERSION.SDK_INT >= 30) layout.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -130,6 +132,16 @@ public final class MainActivity extends Activity {
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true);
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) { return navigate(request.getUrl()); }
+            @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                Log.w("p2w", "Display renderer exited crash=" + detail.didCrash());
+                layout.removeView(view);
+                if (web == view) web = null;
+                view.destroy();
+                loaded = false;
+                status.setVisibility(TextView.VISIBLE);
+                status.setText("The display stopped. Tap here to reopen your sessions.");
+                return true;
+            }
         });
         web.setWebChromeClient(new WebChromeClient() {
             @Override @SuppressWarnings("deprecation") public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams parameters) {
@@ -145,6 +157,10 @@ public final class MainActivity extends Activity {
                 if (!userGesture) return false;
                 WebView popup = new WebView(MainActivity.this);
                 popup.setWebViewClient(new WebViewClient() {
+                    @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                        view.destroy();
+                        return true;
+                    }
                     @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                         navigate(request.getUrl());
                         handler.post(popup::destroy);
