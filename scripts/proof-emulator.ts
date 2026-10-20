@@ -130,6 +130,25 @@ try {
 	if (method !== "am-kill") {
 		await client.close();
 		await healthy();
+		let autonomousLog: string | undefined;
+		const recoveryDeadline = Date.now() + 1800_000;
+		while (Date.now() < recoveryDeadline) {
+			const log = await command(
+				"shell",
+				"run-as",
+				packageName,
+				"cat",
+				`files/tmp/durable-codemode/restart-${runId}.log`,
+			);
+			if (/^4 /m.test(log)) {
+				autonomousLog = log;
+				break;
+			}
+			await delay(2000);
+		}
+		assert(autonomousLog, "Step 4 must run before a client opens the recovered session");
+		await writeFile(join(output, `${method}-before-open.log`), autonomousLog);
+		await appendFile(events, `${JSON.stringify({ at: new Date().toISOString(), type: "autonomous-step-4" })}\n`);
 		client = await Client.connect(origin, 1800_000);
 		await client.request({ type: "open", sessionId: session.id });
 	}

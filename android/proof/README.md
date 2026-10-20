@@ -15,7 +15,8 @@ to the app's actual debug WebView, then captures onboarding, five models and the
 foreground notification at folded and unfolded sizes. After enabling the debug
 fake provider, `node scripts/proof-emulator.ts node-kill` or `force-stop` submits
 one real ten-second torture script to the phone-local server, kills during step 3,
-and checks the returned result against the log pulled with `run-as`. Run the UI
+waits for step 4 in the device log before reopening the session, and checks the
+returned result against the log pulled with `run-as`. Run the UI
 driver with the resulting session UUID to capture its interrupted step and final
 result. `P2W_EMULATOR_PROOF` chooses the output directory for either driver.
 

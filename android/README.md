@@ -93,3 +93,36 @@ after restart, avoiding unsafe reaping on a shared machine.
 Physical Pixel behavior, real provider sign-in, Android battery policy under a
 long screen-off soak, and arm64 execution require device verification. Emulator
 and web proof results are recorded separately in the PR and proof artifacts.
+
+## Verification from the overnight build
+
+The fake-provider host test passed the twelve-step codemode restart test three
+times per requested kill method at the real ten-second sleep: archive/restore,
+worker SIGKILL, whole-stack SIGKILL, server SIGTERM and owned process-group
+SIGKILL. Each selected run interrupts step 3, catches the interruption, completes
+steps 4–12 and final cat, and retains one submission without duplicate log lines.
+The complete inventory, including failed attempts, is in
+`/workspace/badlogic-torture/proof/torture/SUMMARY.md`.
+
+Production web proof covers onboarding, the five models, interrupted step 3 and
+the final result at folded and unfolded viewports. A video records an actual
+archive/restore run. Files are under `/workspace/badlogic-torture/proof/web/`.
+
+On the coordinator's software emulator, APK revision 1d59aed installed and ran
+its own x86_64 Node v24.18.0 under the app UID. Normal Activity-owned foreground
+promotion, its persistent notification state and localhost HTTP 200 were observed.
+Cold Activity launch took 134,564 ms under TCG. First observed HTTP success was
+64 minutes after launch, including platform stalls, renderer crashes and earlier
+invalid health probes on a mismatched forwarded port; this is not a clean Node
+startup benchmark. Host and device forwarding must both use port 18787.
+
+Native twelve-step recovery, Node-kill restart and force-stop recovery were **not
+verified**. Android repeatedly restarted system_server after watchdog stalls,
+left user 0 in BOOTING and temporarily lost package/activity services. Updating
+to the renderer-recovery APK failed during those platform restarts. Its byte-
+identical JS payload comparison is evidence of matching assets, not a completed
+update. The later service-only debug attempt never submitted a prompt. Native
+screenrecord exited 235 and yielded an empty file; current platform frames were
+black. The renderer-loss fix compiles but was not verified on-device. Native UI
+proof at both sizes is therefore replaced by the explicitly labeled web proof.
+See `/workspace/badlogic-torture/proof/emulator/RESULTS.md` for exact evidence.

@@ -28,8 +28,12 @@ def payload(path):
 
 
 def command(*args):
-    result = subprocess.run([adb, "-s", serial, *args], check=True,
+    result = subprocess.run([adb, "-s", serial, *args],
                             capture_output=True, timeout=1200)
+    if result.returncode:
+        sys.stderr.buffer.write(result.stdout)
+        sys.stderr.buffer.write(result.stderr)
+        result.check_returncode()
     return result.stdout
 
 
