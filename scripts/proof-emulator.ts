@@ -16,7 +16,7 @@ const execute = promisify(execFile);
 const adb = join(homedir(), "Android/Sdk/platform-tools/adb");
 const serial = process.env.P2W_ADB_SERIAL ?? "emulator-5572";
 const output = process.env.P2W_EMULATOR_PROOF ?? "/workspace/badlogic-torture/proof/emulator";
-const origin = "http://127.0.0.1:19787";
+const origin = "http://127.0.0.1:18787";
 const packageName = "dev.whamp.p2w";
 const method = process.argv[2] ?? "node-kill";
 const manualService = process.env.P2W_EMULATOR_MANUAL_SERVICE === "1";
@@ -55,13 +55,21 @@ let client: Client | undefined;
 let heartbeat: ReturnType<typeof setInterval> | undefined;
 let monitor: ReturnType<typeof setInterval> | undefined;
 try {
-	await command("forward", "tcp:19787", "tcp:18787");
+	await command("forward", "tcp:18787", "tcp:18787");
 	await healthy();
-	client = await Client.connect(origin, 600_000);
+	const appVersion = (await command("shell", "run-as", packageName, "cat", "files/app/.installed-version")).trim();
+	const activityPid = (await command("shell", "pidof", packageName)).trim();
+	assert(/^\d+$/.test(activityPid));
+	client = await Client.connect(origin, 1800_000);
 	const runId = `${method}-${randomUUID()}`;
 	const session = await client.request<SessionSummary>({ type: "create", cwd: "~", title: `Android ${method}` });
 	assert.equal(session.model.provider, "faux", "Android proof must explicitly enable the debug fake provider first");
 	await client.request({ type: "open", sessionId: session.id });
+	const worker = client.workers.get(session.id)?.pid;
+	assert(worker);
+	const stat = await command("shell", "run-as", packageName, "cat", `/proc/${worker}/stat`);
+	const nodePid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+	assert(Number.isInteger(nodePid) && nodePid > 1);
 	const submission = await client.request({
 		type: "prompt",
 		sessionId: session.id,
@@ -94,11 +102,7 @@ try {
 		);
 	}, 1200_000);
 	const before = client.views.get(session.id);
-	const worker = client.workers.get(session.id)?.pid;
-	assert(worker);
-	const stat = await command("shell", "run-as", packageName, "cat", `/proc/${worker}/stat`);
-	const nodePid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-	assert(Number.isInteger(nodePid) && nodePid > 1);
+	assert.equal(client.workers.get(session.id)?.pid, worker, "Worker changed before the scheduled kill");
 	await appendFile(
 		events,
 		`${JSON.stringify({ at: new Date().toISOString(), type: "kill", method, nodePid, worker, sessionId: session.id, submission })}\n`,
@@ -126,7 +130,7 @@ try {
 	if (method !== "am-kill") {
 		await client.close();
 		await healthy();
-		client = await Client.connect(origin, 600_000);
+		client = await Client.connect(origin, 1800_000);
 		await client.request({ type: "open", sessionId: session.id });
 	}
 	await until(() => codemodeResult(client?.views.get(session.id)) !== undefined, 2400_000);
@@ -155,8 +159,24 @@ try {
 		`files/tmp/durable-codemode/restart-${runId}.log`,
 	);
 	assert.equal(result.value.log.replaceAll("\r\n", "\n"), actual.replaceAll("\r\n", "\n"));
+	const newWorker = client.workers.get(session.id)?.pid;
+	assert(newWorker);
+	const newStat = await command("shell", "run-as", packageName, "cat", `/proc/${newWorker}/stat`);
+	const newNodePid = Number(newStat.slice(newStat.lastIndexOf(")") + 2).split(" ")[1]);
+	assert(Number.isInteger(newNodePid) && newNodePid > 1);
+	const newActivityPid = (await command("shell", "pidof", packageName)).trim();
+	assert(/^\d+$/.test(newActivityPid));
+	if (method === "node-kill") {
+		assert.notEqual(newNodePid, nodePid, "The foreground service must launch a replacement Node process");
+		assert.equal(newActivityPid, activityPid, "Node recovery must preserve the Android service process");
+	}
+	if (method === "force-stop") {
+		assert.notEqual(newNodePid, nodePid);
+		assert.notEqual(newActivityPid, activityPid);
+	}
 	const proof = {
 		serial,
+		appVersion,
 		manualService,
 		method,
 		runId,
@@ -164,8 +184,11 @@ try {
 		conversationId: view.conversation.id,
 		submission,
 		nodePid,
+		newNodePid,
+		activityPid,
+		newActivityPid,
 		oldWorker: worker,
-		newWorker: client.workers.get(session.id)?.pid,
+		newWorker,
 		verdict,
 		...result.value,
 		calls: result.calls,
@@ -174,7 +197,7 @@ try {
 	await writeFile(join(output, `${method}-restart.log`), actual);
 	await writeFile(
 		join(output, `${method}-services.txt`),
-		await command("shell", "dumpsys", "activity", "services", packageName),
+		await command("shell", "dumpsys", "-t", "120", "activity", "services", packageName),
 	);
 	await screenshot(`${method}-completed.png`);
 	console.log(JSON.stringify(proof));

@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 const execute = promisify(execFile);
 const adb = join(homedir(), "Android/Sdk/platform-tools/adb");
 const serial = process.env.P2W_ADB_SERIAL ?? "emulator-5572";
-const output = "/workspace/badlogic-torture/proof/emulator";
+const output = process.env.P2W_EMULATOR_PROOF ?? "/workspace/badlogic-torture/proof/emulator";
 const run = async (...args) => (await execute(adb, ["-s", serial, ...args], { timeout: 600000 })).stdout;
 const apk = (await run("shell", "pm", "path", "dev.whamp.p2w")).trim().replace(/^package:/, "");
 assert(/^\/data\/app\/[a-zA-Z0-9_/.=~-]+\/base\.apk$/.test(apk));
