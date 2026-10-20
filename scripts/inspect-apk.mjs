@@ -70,6 +70,7 @@ try {
 	await scan(join(temporary, "app"), "app");
 	const result = {
 		apk,
+		appVersion: (await readFile(join(temporary, "apk/assets/app-version.txt"), "utf8")).trim(),
 		bytes: (await stat(apk)).size,
 		sha256: createHash("sha256")
 			.update(await readFile(apk))

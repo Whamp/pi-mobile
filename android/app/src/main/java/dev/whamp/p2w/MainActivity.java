@@ -3,6 +3,7 @@ package dev.whamp.p2w;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.ForegroundServiceStartNotAllowedException;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -36,22 +37,23 @@ public final class MainActivity extends Activity {
     private TextView status;
     private boolean destroyed;
     private boolean loaded;
+    private boolean restartRuntime;
+    private boolean runtimeRequested;
     private ValueCallback<Uri[]> fileChoice;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        boolean restart = false;
         if (BuildConfig.DEBUG && getIntent().hasExtra("fake")) {
             boolean fake = getIntent().getBooleanExtra("fake", false);
-            restart = getSharedPreferences("p2w", MODE_PRIVATE).getBoolean("fake", false) != fake;
+            restartRuntime = getSharedPreferences("p2w", MODE_PRIVATE).getBoolean("fake", false) != fake;
             getSharedPreferences("p2w", MODE_PRIVATE).edit().putBoolean("fake", fake).apply();
         }
-        startForegroundService(new Intent(this, RuntimeService.class).putExtra("restart", restart));
         layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         status = new TextView(this);
         status.setText("p2w · Starting the on-device runtime…\nFirst launch unpacks the app. This can take a moment.");
         status.setPadding(24, 32, 24, 24);
+        status.setOnClickListener(view -> requestRuntime());
         layout.addView(status);
         setContentView(layout);
         if (Build.VERSION.SDK_INT >= 30) layout.setOnApplyWindowInsetsListener((view, insets) -> {
@@ -63,6 +65,21 @@ public final class MainActivity extends Activity {
         pollHealth();
         getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT,
             () -> { if (web != null && web.canGoBack()) web.goBack(); else finish(); });
+    }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (focused) requestRuntime();
+    }
+
+    private void requestRuntime() {
+        if (runtimeRequested || destroyed || !hasWindowFocus()) return;
+        try {
+            startForegroundService(new Intent(this, RuntimeService.class).putExtra("restart", restartRuntime));
+            runtimeRequested = true;
+        } catch (ForegroundServiceStartNotAllowedException error) {
+            status.setText("Android is waiting for p2w to be visible. Tap here to start the on-device agent.");
+        }
     }
 
     private void createWebView() {
