@@ -43,11 +43,7 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        if (BuildConfig.DEBUG && getIntent().hasExtra("fake")) {
-            boolean fake = getIntent().getBooleanExtra("fake", false);
-            restartRuntime = getSharedPreferences("p2w", MODE_PRIVATE).getBoolean("fake", false) != fake;
-            getSharedPreferences("p2w", MODE_PRIVATE).edit().putBoolean("fake", fake).apply();
-        }
+        restartRuntime = applyDebugIntent(getIntent());
         layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         status = new TextView(this);
@@ -72,12 +68,38 @@ public final class MainActivity extends Activity {
         if (focused) requestRuntime();
     }
 
+    @Override protected void onResume() {
+        super.onResume();
+        requestRuntime();
+    }
+
+    private boolean applyDebugIntent(Intent intent) {
+        if (!BuildConfig.DEBUG || !intent.hasExtra("fake")) return false;
+        boolean fake = intent.getBooleanExtra("fake", false);
+        boolean changed = getSharedPreferences("p2w", MODE_PRIVATE).getBoolean("fake", false) != fake;
+        getSharedPreferences("p2w", MODE_PRIVATE).edit().putBoolean("fake", fake).apply();
+        return changed;
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (applyDebugIntent(intent)) {
+            restartRuntime = true;
+            runtimeRequested = false;
+            loaded = false;
+            handler.postDelayed(this::pollHealth, 1800);
+        }
+        requestRuntime();
+    }
+
     private void requestRuntime() {
         if (runtimeRequested || destroyed || !hasWindowFocus()) return;
         try {
             startForegroundService(new Intent(this, RuntimeService.class).putExtra("restart", restartRuntime));
             runtimeRequested = true;
         } catch (ForegroundServiceStartNotAllowedException error) {
+            status.setVisibility(TextView.VISIBLE);
             status.setText("Android is waiting for p2w to be visible. Tap here to start the on-device agent.");
         }
     }
@@ -156,7 +178,9 @@ public final class MainActivity extends Activity {
             .setMessage(fake ? "Switch back to real provider sign-in?" : "Use the deterministic fake provider? Its tools still run on this phone.")
             .setNegativeButton("Cancel", null).setPositiveButton("Switch", (dialog, which) -> {
                 getSharedPreferences("p2w", MODE_PRIVATE).edit().putBoolean("fake", !fake).apply();
-                startForegroundService(new Intent(this, RuntimeService.class).putExtra("restart", true));
+                restartRuntime = true;
+                runtimeRequested = false;
+                requestRuntime();
                 loaded = false;
                 handler.postDelayed(this::pollHealth, 1800);
             }).show();

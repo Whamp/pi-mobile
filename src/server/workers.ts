@@ -235,8 +235,15 @@ export class Workers {
 						current.pending.delete(event.id);
 						// IPC can dispatch the next frame before a resolved Promise's continuation.
 						// Install the base synchronously so that frame cannot be dropped.
-						if (pending?.viewConversationId !== undefined && event.view)
+						if (pending?.viewConversationId !== undefined && event.view) {
 							current.views.set(pending.viewConversationId, event.view);
+							this.emit({
+								type: "snapshot",
+								sessionId: id,
+								conversationId: pending.viewConversationId,
+								view: event.view,
+							});
+						}
 						if (event.error) pending?.reject(new Error(event.error));
 						else
 							pending?.resolve({ submissionId: event.submissionId, restored: event.restored, view: event.view });
@@ -300,10 +307,7 @@ export class Workers {
 					.filter((viewer) => viewer.sessionId === id)
 					.map((viewer) => viewer.conversationId),
 			);
-			for (const conversationId of viewed) {
-				const view = await this.watch(id, current, conversationId).catch(() => undefined);
-				if (view) this.emit({ type: "snapshot", sessionId: id, conversationId, view });
-			}
+			for (const conversationId of viewed) await this.watch(id, current, conversationId).catch(() => undefined);
 			return current;
 		} catch (error) {
 			await this.terminate(id);

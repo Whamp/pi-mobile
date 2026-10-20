@@ -14,7 +14,7 @@ import { codemodeResult } from "./torture.ts";
 
 const execute = promisify(execFile);
 const adb = join(homedir(), "Android/Sdk/platform-tools/adb");
-const serial = process.env.P2W_ADB_SERIAL ?? "emulator-5570";
+const serial = process.env.P2W_ADB_SERIAL ?? "emulator-5572";
 const output = process.env.P2W_EMULATOR_PROOF ?? "/workspace/badlogic-torture/proof/emulator";
 const origin = "http://127.0.0.1:19787";
 const packageName = "dev.whamp.p2w";

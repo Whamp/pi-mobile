@@ -2,7 +2,7 @@ name: Check
 on:
   pull_request:
   push:
-    branches: [main, feat/p2w-android]
+    branches: [main]
 permissions:
   contents: read
 concurrency:
