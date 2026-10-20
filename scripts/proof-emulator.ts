@@ -19,6 +19,7 @@ const output = process.env.P2W_EMULATOR_PROOF ?? "/workspace/badlogic-torture/pr
 const origin = "http://127.0.0.1:19787";
 const packageName = "dev.whamp.p2w";
 const method = process.argv[2] ?? "node-kill";
+const manualService = process.env.P2W_EMULATOR_MANUAL_SERVICE === "1";
 assert(["node-kill", "force-stop", "am-kill"].includes(method));
 await mkdir(output, { recursive: true });
 const events = join(output, `${method}-events.jsonl`);
@@ -106,6 +107,18 @@ try {
 	else if (method === "force-stop") {
 		await command("shell", "am", "force-stop", packageName);
 		await command("shell", "am", "start", "-n", `${packageName}/.MainActivity`, "--ez", "fake", "true");
+		if (manualService)
+			await command(
+				"shell",
+				"run-as",
+				packageName,
+				"am",
+				"start-foreground-service",
+				"--user",
+				"0",
+				"-n",
+				`${packageName}/.RuntimeService`,
+			);
 	} else {
 		await command("shell", "input", "keyevent", "KEYCODE_HOME");
 		await command("shell", "am", "kill", packageName);
@@ -144,6 +157,7 @@ try {
 	assert.equal(result.value.log.replaceAll("\r\n", "\n"), actual.replaceAll("\r\n", "\n"));
 	const proof = {
 		serial,
+		manualService,
 		method,
 		runId,
 		sessionId: session.id,

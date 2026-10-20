@@ -58,7 +58,9 @@ copies Node 24.18.0 and its nine private ELF dependencies for each ABI, rewrites
 private dependency names and SONAMEs, and verifies at least 16 KiB LOAD alignment.
 Public trust roots and upstream license notices are included. `package-android.mjs`
 compiles the existing app layout, preserves portable production dependencies and
-QuickJS WASM/worker files, and substitutes static web hosting for development Vite.
+QuickJS WASM/worker files, omits dependency type declarations and source maps,
+and substitutes static web hosting for development Vite. The compressed app ZIP
+is stored directly in APK assets to avoid a second layer of inflation on launch.
 Only explicit staging inputs enter app.zip; HOME, auth files and session data do
 not. APK content is reproducible from pinned inputs; debug signing and ZIP/build
 timestamps mean byte-identical APKs are not promised.

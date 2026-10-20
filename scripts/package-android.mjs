@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
@@ -17,6 +17,19 @@ execFileSync("npm", ["ci", "--omit=dev", "--ignore-scripts", "--cache", join(roo
 	cwd: app,
 	stdio: "inherit",
 });
+let omitted = 0;
+async function removeBuildMetadata(directory) {
+	for (const entry of await readdir(directory, { withFileTypes: true })) {
+		const path = join(directory, entry.name);
+		if (entry.isDirectory()) await removeBuildMetadata(path);
+		else if (/\.d\.(?:ts|mts|cts)$|\.map$/.test(entry.name)) {
+			await rm(path);
+			omitted++;
+		}
+	}
+}
+await removeBuildMetadata(join(app, "node_modules"));
+console.log(`Omitted ${omitted} dependency type declarations and source maps from the runtime bundle.`);
 await build({
 	configFile: false,
 	root,
