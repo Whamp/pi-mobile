@@ -13,11 +13,12 @@ const dev = process.env.PI_MOBILE_DEV === "1";
 const resume: unknown = dev ? JSON.parse(process.env.PI_MOBILE_DEV_RESUME ?? "[]") : [];
 if (!Array.isArray(resume) || !resume.every((id) => typeof id === "string")) throw new Error("Invalid dev resume list");
 const app = await createApp({
-	web: true,
+	web: process.env.PI_MOBILE_WEB !== "0",
 	allowedHosts,
 	directory: process.env.PI_MOBILE_DATA_DIR,
 	fake: process.env.PI_MOBILE_FAKE === "1",
 	defaultModel: provider && modelId ? { provider, modelId } : undefined,
+	recover: process.env.PI_MOBILE_RESUME === "1",
 });
 if (allowedHosts[0]) {
 	// Keep the sign-in token private: never log it or put it in a URL.
@@ -51,6 +52,7 @@ app.http.on("error", (error) => {
 app.http.listen(port, "127.0.0.1", () => {
 	const address = app.http.address();
 	if (address && typeof address !== "string") console.log(`Pi Mobile: http://127.0.0.1:${address.port}`);
+	void app.workers.recover().catch(() => console.error("Could not recover saved workers"));
 	if (dev)
 		void (async () => {
 			for (const id of resume) {

@@ -2,6 +2,7 @@ import type { JsonValue } from "@earendil-works/chord";
 import type { AssistantMessage, ImageContent, ToolResultMessage, Usage } from "@earendil-works/pi-ai";
 import { estimateContextTokens } from "@earendil-works/pi-ai/utils/estimate";
 import type { AgentState, ConversationView, InboxState, LiveState, ToolSlot } from "@earendil-works/pi-durable";
+import type { CodemodeNestedCall, CodemodeToolDetails } from "@earendil-works/pi-durable/codemode";
 import { type Author, SPEAKER_PREFIX } from "../shared/sharing.ts";
 
 // Pure display model of a Durable view: tool calls are joined with their live
@@ -15,6 +16,7 @@ export type ToolView = {
 	output: string;
 	details?: JsonValue;
 	images: ImageContent[];
+	calls?: CodemodeNestedCall[];
 };
 export type Item =
 	| { type: "user"; key: string; text: string; author?: Author; images: ImageContent[]; files: string[] }
@@ -55,6 +57,7 @@ function resultTool(result: ToolResultMessage, name = result.toolName): ToolView
 		status: result.isError ? "error" : "done",
 		output: text(result.content),
 		details: result.details as JsonValue | undefined,
+		...(name === "codemode" ? { calls: (result.details as CodemodeToolDetails | undefined)?.calls ?? [] } : {}),
 		images: result.content.filter((part) => part.type === "image"),
 	};
 }
@@ -150,6 +153,25 @@ export function buildTranscript(view: ConversationView): Transcript {
 						output: slot?.output ?? "",
 						details: slot?.details,
 						images: [],
+						...(part.name === "codemode"
+							? {
+									calls: (live?.nestedTools ?? [])
+										.filter((slot) => slot.parentCallId === part.id)
+										.map((slot) => ({
+											id: Number(slot.callId.split("/c").at(-1)),
+											name: slot.name,
+											args: JSON.stringify(slot.arguments),
+											status:
+												slot.status === "done"
+													? slot.summary?.isError
+														? ("error" as const)
+														: ("ok" as const)
+													: ("running" as const),
+											durationMs: slot.summary?.durationMs,
+											error: slot.summary?.error,
+										})),
+								}
+							: {}),
 					},
 				];
 			});

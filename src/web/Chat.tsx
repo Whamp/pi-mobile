@@ -113,6 +113,16 @@ function ToolCard({ tool }: { tool: ToolView }) {
 	let preview: string | undefined;
 	let extra: React.ReactNode = null;
 	switch (tool.name) {
+		case "codemode":
+			title = "Code";
+			summary = `${tool.calls?.filter((call) => call.status === "ok").length ?? 0} calls completed`;
+			body = (
+				<div className="stack">
+					<CodeBlock tool code={str(tool.args.code)} language="javascript" />
+					{tool.output && <pre className="code">{tool.output}</pre>}
+				</div>
+			);
+			break;
 		case "bash":
 			icon = <TerminalIcon />;
 			title = "";
@@ -208,6 +218,32 @@ function ToolCard({ tool }: { tool: ToolView }) {
 				<pre className="tool-preview err">{tail(tool.output, 3)}</pre>
 			)}
 			{extra}
+			{tool.calls && (
+				<ol className="nested-calls" aria-label="Codemode tool calls">
+					{tool.calls.map((call) => (
+						<li key={call.id} className={`nested-call ${call.status}`}>
+							<details open={call.status === "error"}>
+								<summary>
+									<span className="nested-state">
+										{call.status === "running" ? (
+											<span className="spinner" />
+										) : call.status === "ok" ? (
+											<CheckIcon />
+										) : (
+											<AlertIcon />
+										)}
+									</span>
+									<strong>{call.name}</strong>
+									<span className="nested-args">{call.args}</span>
+									{call.durationMs !== undefined && <small>{(call.durationMs / 1000).toFixed(1)}s</small>}
+								</summary>
+								{call.error && <p className="error">{call.error}</p>}
+								<pre>{call.args}</pre>
+							</details>
+						</li>
+					))}
+				</ol>
+			)}
 			<Images images={tool.images} />
 		</div>
 	);

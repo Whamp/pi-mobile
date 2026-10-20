@@ -20,6 +20,7 @@ import {
 } from "./icons.tsx";
 import { LoginPanel } from "./LoginPanel.tsx";
 import { type ModelChoice, ModelPicker, modelName } from "./ModelPicker.tsx";
+import { Onboarding } from "./Onboarding.tsx";
 import { OwnerToken } from "./OwnerToken.tsx";
 import { Sharing } from "./Sharing.tsx";
 import { Sheet } from "./Sheet.tsx";
@@ -35,7 +36,7 @@ async function upload(sessionId: string, file: File): Promise<string> {
 	return result.id;
 }
 
-type Panel = "model" | "providers" | "session" | "cwd" | "owner-token" | "share" | undefined;
+type Panel = "model" | "providers" | "session" | "cwd" | "owner-token" | "share" | "onboarding" | undefined;
 
 export function App() {
 	const client = useMemo(() => new MobileClient(), []);
@@ -47,6 +48,12 @@ export function App() {
 	const canStop = owner || guest?.canStop === true;
 	const [drawer, setDrawer] = useState(false);
 	const [panel, setPanel] = useState<Panel>();
+	useEffect(() => {
+		if (resources?.profile === "p2w" && owner && !localStorage.getItem("p2w-onboarded")) {
+			localStorage.setItem("p2w-onboarded", "1");
+			setPanel("onboarding");
+		}
+	}, [resources?.profile, owner]);
 	const [draft, setDraft] = useState("");
 	const [steer, setSteer] = useState(true);
 	const [sending, setSending] = useState(false);
@@ -163,6 +170,14 @@ export function App() {
 			if (!sessionId) {
 				if (!draftChoice) {
 					setPanel("model");
+					return;
+				}
+				if (
+					resources?.profile === "p2w" &&
+					!resources.fake &&
+					!resources.credentials.some((credential) => credential.providerId === draftChoice.model.provider)
+				) {
+					setPanel("providers");
 					return;
 				}
 				const session = await client.request<SessionSummary>({
@@ -338,6 +353,7 @@ export function App() {
 					</button>
 				)}
 				{active?.worker.error && <div className="banner">{active.worker.error}</div>}
+				{resources?.fake && <div className="banner">Debug · fake provider · tools run on this phone</div>}
 
 				<div className="scroller" ref={scroller} onScroll={onScroll}>
 					{transcript && active ? (
@@ -590,7 +606,20 @@ export function App() {
 				/>
 			)}
 			{panel === "providers" && (
-				<LoginPanel client={client} resources={resources} login={state.login} onClose={() => setPanel(undefined)} />
+				<LoginPanel
+					client={client}
+					resources={resources}
+					login={state.login}
+					onClose={() => setPanel(undefined)}
+					onSetup={resources?.profile === "p2w" ? () => setPanel("onboarding") : undefined}
+				/>
+			)}
+			{panel === "onboarding" && (
+				<Onboarding
+					resources={resources}
+					onProviders={() => setPanel("providers")}
+					onClose={() => setPanel(undefined)}
+				/>
 			)}
 			{panel === "cwd" && (
 				<CwdSheet

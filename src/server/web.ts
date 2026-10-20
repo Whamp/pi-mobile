@@ -15,6 +15,7 @@ export async function createWeb(http: Server, nonce: string, remoteHosts: readon
 		envPrefix: "PI_MOBILE_PUBLIC_",
 		html: { cspNonce: nonce },
 		server: {
+			watch: { ignored: ["**/android/.cache/**", "**/android/.generated/**", "**/android/**/build/**"] },
 			middlewareMode: true,
 			// Our server validates Host first; Vite repeats the check for tunnel hosts.
 			allowedHosts: remoteHosts.map((host) => host.replace(/:\d+$/, "")),

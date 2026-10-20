@@ -16,6 +16,9 @@ import { type MobileSettings, parseSettings, saveSettings } from "./settings.ts"
 export type ResourceError = { resource: "settings" | "models" | "credentials" | "prompt"; message: string };
 export type ResourceSnapshot = {
 	version: number;
+	profile?: "p2w";
+	fake?: boolean;
+	debug?: boolean;
 	settings: MobileSettings;
 	credentials: CredentialInfo[];
 	providers: {
@@ -224,9 +227,21 @@ export class Resources {
 	}
 
 	snapshot(): ResourceSnapshot {
+		const profile = process.env.PI_MOBILE_PROFILE === "p2w";
 		return {
 			version: this.revision,
-			settings: this.settings,
+			...(profile
+				? { profile: "p2w" as const, fake: this.options.fake ?? false, debug: process.env.PI_MOBILE_DEBUG === "1" }
+				: {}),
+			settings: profile
+				? {
+						defaultModel: this.options.fake
+							? { provider: "faux", modelId: "faux-1" }
+							: { provider: P2W_MODELS[0].provider, modelId: P2W_MODELS[0].modelId },
+						thinkingLevel: this.options.fake ? "off" : "high",
+						...this.settings,
+					}
+				: this.settings,
 			credentials: this.credentials.metadata(),
 			errors: this.resourceErrors,
 			providers: this.models

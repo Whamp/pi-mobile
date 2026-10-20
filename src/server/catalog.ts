@@ -8,7 +8,7 @@ import type { ModelRef } from "@earendil-works/pi-durable";
 import type { IndexedMessage, SearchHit, SearchResults, SessionInfo, SubagentInfo } from "../shared/protocol.ts";
 
 export const defaultDataDirectory = join(homedir(), ".pi", "mobile");
-const schemaVersion = 2;
+const schemaVersion = 3;
 
 export class Catalog {
 	readonly directory: string;
@@ -20,19 +20,21 @@ export class Catalog {
 		this.db = new DatabaseSync(join(directory, "catalog.sqlite"));
 		this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;");
 		const version = this.db.prepare("PRAGMA user_version").get()?.user_version;
-		if (version !== 0 && version !== 1 && version !== schemaVersion) {
+		if (version !== 0 && version !== 1 && version !== 2 && version !== schemaVersion) {
 			this.db.close();
 			throw new Error(`Unsupported catalog schema: ${version}`);
 		}
 		// v2: subagent conversations, recorded so the sidebar lists them while a worker is stopped.
 		if (version === 1) this.db.exec("ALTER TABLE sessions ADD COLUMN subagents TEXT NOT NULL DEFAULT '[]'");
+		if (version === 1 || version === 2)
+			this.db.exec("ALTER TABLE sessions ADD COLUMN resume INTEGER NOT NULL DEFAULT 0");
 		this.db.exec(`
 			CREATE TABLE IF NOT EXISTS sessions (
 				id TEXT PRIMARY KEY, cwd TEXT NOT NULL, title TEXT NOT NULL,
 				titleEdited INTEGER NOT NULL DEFAULT 0, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL,
 				archivedAt INTEGER, pinned INTEGER NOT NULL DEFAULT 0,
 				model TEXT NOT NULL, thinkingLevel TEXT NOT NULL, indexedThrough INTEGER NOT NULL DEFAULT 0,
-				subagents TEXT NOT NULL DEFAULT '[]'
+				subagents TEXT NOT NULL DEFAULT '[]', resume INTEGER NOT NULL DEFAULT 0
 			) STRICT;
 			CREATE TABLE IF NOT EXISTS messages (
 				rowid INTEGER PRIMARY KEY, sessionId TEXT NOT NULL REFERENCES sessions(id),
@@ -54,6 +56,18 @@ export class Catalog {
 	storagePath(id: string): string {
 		this.get(id); // Only catalog IDs can become paths.
 		return join(this.directory, "sessions", `${id}.sqlite`);
+	}
+
+	resumable(): string[] {
+		return this.db
+			.prepare("SELECT id FROM sessions WHERE resume=1 AND archivedAt IS NULL")
+			.all()
+			.map((row) => String(row.id));
+	}
+
+	setResume(id: string, resume: boolean): void {
+		this.get(id);
+		this.db.prepare("UPDATE sessions SET resume=? WHERE id=?").run(Number(resume), id);
 	}
 
 	create(cwd: string, model: ModelRef, thinkingLevel: ModelThinkingLevel, title?: string): SessionInfo {

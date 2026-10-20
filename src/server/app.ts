@@ -104,6 +104,7 @@ export async function createApp(options: AppOptions = {}) {
 						path === sessionPath ||
 						path.startsWith(`${sessionPath}/a/`) ||
 						path.startsWith("/src/web/") ||
+						path.startsWith("/assets/") ||
 						path === "/src/shared/sharing.ts" ||
 						path.startsWith("/node_modules/.vite/") ||
 						path === "/@vite/client" ||

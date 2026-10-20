@@ -119,11 +119,13 @@ export function LoginPanel({
 	resources,
 	login,
 	onClose,
+	onSetup,
 }: {
 	client: MobileClient;
 	resources?: ResourceSnapshot;
 	login?: LoginView;
 	onClose: () => void;
+	onSetup?: () => void;
 }) {
 	const [providerId, setProviderId] = useState<string>();
 	const [query, setQuery] = useState("");
@@ -233,6 +235,18 @@ export function LoginPanel({
 		.sort((a, b) => Number(stored.has(b.id)) - Number(stored.has(a.id)) || a.name.localeCompare(b.name));
 	return (
 		<Sheet title="Providers" onClose={close}>
+			{onSetup && (
+				<div className="stack">
+					<button type="button" className="button block" onClick={onSetup}>
+						Phone setup and onboarding
+					</button>
+					{resources?.debug && (
+						<a className="button ghost block" href="/android/debug">
+							Debug provider settings
+						</a>
+					)}
+				</div>
+			)}
 			<label className="search">
 				<SearchIcon />
 				<input

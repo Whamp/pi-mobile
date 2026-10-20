@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -39,30 +39,21 @@ export function codemodeResult(view: ConversationView | undefined) {
 }
 
 async function descendants(root: number): Promise<{ pid: number; parent: number; group: number }[]> {
-	const processes = (
-		await Promise.all(
-			(
-				await readdir("/proc")
-			)
-				.filter((name) => /^\d+$/.test(name))
-				.map(async (name) => {
-					try {
-						const stat = await readFile(`/proc/${name}/stat`, "utf8");
-						const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-						return { pid: Number(name), parent: Number(fields[1]), group: Number(fields[2]) };
-					} catch {
-						return undefined;
-					}
-				}),
-		)
-	).filter((item) => item !== undefined);
-	const owned = new Set([root]);
-	let size: number;
-	do {
-		size = owned.size;
-		for (const item of processes) if (owned.has(item.parent)) owned.add(item.pid);
-	} while (owned.size !== size);
-	return processes.filter((item) => owned.has(item.pid));
+	const owned: { pid: number; parent: number; group: number }[] = [];
+	async function visit(pid: number) {
+		let children: string;
+		try {
+			const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+			const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+			owned.push({ pid, parent: Number(fields[1]), group: Number(fields[2]) });
+			children = await readFile(`/proc/${pid}/task/${pid}/children`, "utf8");
+		} catch {
+			return;
+		}
+		for (const child of children.trim().split(/\s+/).filter(Boolean)) await visit(Number(child));
+	}
+	await visit(root);
+	return owned;
 }
 
 export async function runTorture(method: KillMethod, outputDirectory: string, sleepSeconds = 0.5) {
@@ -96,6 +87,7 @@ export async function runTorture(method: KillMethod, outputDirectory: string, sl
 				PI_MOBILE_PROVIDER: "",
 				PI_MOBILE_MODEL: "",
 				PI_MOBILE_PROFILE: "",
+				PI_MOBILE_WEB: "0",
 				PI_MOBILE_TORTURE_SLEEP: String(sleepSeconds),
 			},
 			stdio: ["ignore", "pipe", "pipe"],
@@ -120,7 +112,13 @@ export async function runTorture(method: KillMethod, outputDirectory: string, sl
 		const session = await client.request<SessionSummary>({ type: "create", cwd: directory });
 		const id = session.id;
 		heartbeat = setInterval(() => {
-			void client?.request({ type: "heartbeat", sessionId: id }).catch(() => {});
+			const current = client;
+			if (!current || current.socket.readyState !== 1) return;
+			void current.request({ type: "heartbeat", sessionId: id }).catch(async () => {
+				if (current !== client || current.socket.readyState !== 1) return;
+				event("viewer-reattach", { sessionId: id });
+				await current.request({ type: "open", sessionId: id }).catch(() => {});
+			});
 		}, 10_000);
 		await client.request({ type: "open", sessionId: id });
 		const submitted = await client.request<{ submissionId: number }>({
@@ -139,18 +137,21 @@ export async function runTorture(method: KillMethod, outputDirectory: string, sl
 				event("nested-tool", { ...slot, workerPid: client?.workers.get(id)?.pid });
 			}
 		}, 10);
-		await until(() => {
-			const live = client?.views.get(id)?.docs["pi.live"] as unknown as LiveState | undefined;
-			return (
-				live?.nestedTools?.some(
-					(slot) =>
-						slot.name === "bash" &&
-						slot.status === "running" &&
-						typeof slot.arguments.command === "string" &&
-						slot.arguments.command.includes('echo "3 '),
-				) ?? false
-			);
-		}, 60_000);
+		await until(
+			() => {
+				const live = client?.views.get(id)?.docs["pi.live"] as unknown as LiveState | undefined;
+				return (
+					live?.nestedTools?.some(
+						(slot) =>
+							slot.name === "bash" &&
+							slot.status === "running" &&
+							typeof slot.arguments.command === "string" &&
+							slot.arguments.command.includes('echo "3 '),
+					) ?? false
+				);
+			},
+			Math.max(60_000, sleepSeconds * 5000 + 60_000),
+		);
 		assert(server?.pid);
 		const tree = await descendants(server.pid);
 		for (const item of tree) knownProcesses.add(item.pid);
@@ -194,7 +195,10 @@ export async function runTorture(method: KillMethod, outputDirectory: string, sl
 		}
 		await client.request({ type: "open", sessionId: id });
 		event("reopened", { sessionId: id, conversationId: 1, workerPid: client.workers.get(id)?.pid });
-		await until(() => codemodeResult(client?.views.get(id)) !== undefined, 180_000);
+		await until(
+			() => codemodeResult(client?.views.get(id)) !== undefined,
+			Math.max(180_000, sleepSeconds * 12000 + 180_000),
+		);
 		const view = client.views.get(id);
 		assert(view);
 		const completed = codemodeResult(view);

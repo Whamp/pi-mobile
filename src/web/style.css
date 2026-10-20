@@ -1620,3 +1620,77 @@ a {
 	padding: 0 14px;
 	text-align: right;
 }
+
+.onboarding p {
+	line-height: 1.55;
+}
+.onboarding .button {
+	flex-shrink: 0;
+}
+.nested-calls {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+	border-top: 1px solid var(--line);
+}
+.nested-call {
+	padding: 7px 10px;
+	font-size: 12px;
+	border-bottom: 1px solid var(--line);
+}
+.nested-call:last-child {
+	border-bottom: 0;
+}
+.nested-call summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	cursor: pointer;
+	min-height: 28px;
+}
+.nested-state {
+	display: flex;
+	flex: none;
+	width: 16px;
+	color: var(--muted);
+}
+.nested-state svg {
+	width: 16px;
+	height: 16px;
+}
+.nested-call.ok .nested-state {
+	color: var(--ok);
+}
+.nested-call.error .nested-state {
+	color: var(--bad);
+}
+.nested-args {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-family: var(--mono);
+	color: var(--muted);
+}
+.nested-call pre {
+	margin: 8px 0 0;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-size: 11px;
+}
+.nested-call p {
+	margin: 6px 0;
+}
+
+@media (min-width: 720px) and (max-width: 899px) {
+	.drawer {
+		position: static;
+		transform: none;
+		flex: 0 0 230px;
+	}
+	.drawer-scrim,
+	.topbar .menu {
+		display: none;
+	}
+}
