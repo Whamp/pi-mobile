@@ -67,6 +67,14 @@ Only explicit staging inputs enter app.zip; HOME, auth files and session data do
 not. APK content is reproducible from pinned inputs; debug signing and ZIP/build
 timestamps mean byte-identical APKs are not promised.
 
+For a smaller software-emulator install, run `scripts/build-emulator-apk.sh`.
+It builds the universal deliverable first, then creates the x86_64-only
+`/workspace/badlogic-torture/apk/p2w-debug-x86_64-emulator.apk` without replacing
+`p2w-debug.apk`. Both contain the same source revision and app payload. The
+emulator artifact is unsuitable for Will's arm64 phone.
+Inspect it separately with `node scripts/inspect-apk.mjs APK OUTPUT x86_64`;
+omitting the final argument requires both universal ABIs.
+
 ## Debug proof mode
 
 Real providers are the default. In the debug APK only, use **Providers → Debug
@@ -126,3 +134,10 @@ screenrecord exited 235 and yielded an empty file; current platform frames were
 black. The renderer-loss fix compiles but was not verified on-device. Native UI
 proof at both sizes is therefore replaced by the explicitly labeled web proof.
 See `/workspace/badlogic-torture/proof/emulator/RESULTS.md` for exact evidence.
+
+A follow-up used a 50.7 MB x86_64-only APK, confirmed both Android install-verifier
+settings were disabled, and attempted installation of a pushed file with `pm install -r -t`.
+It also failed when the package service disappeared: Broken pipe (32), exit 224.
+Earlier universal installs succeeded on 5570 (coordinator report) and 5572.
+These failures show platform service loss under TCG load, not an APK validation
+error. Reducing the APK size did not make the platform stable enough to test.

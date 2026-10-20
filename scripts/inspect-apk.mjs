@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const apk = process.argv[2] ?? "/workspace/badlogic-torture/apk/p2w-debug.apk";
 const output = process.argv[3] ?? "/workspace/badlogic-torture/proof/apk";
+const expectedAbis = process.argv[4]?.split(",").sort() ?? ["arm64-v8a", "x86_64"];
 const sdk = process.env.ANDROID_HOME ?? join(homedir(), "Android/Sdk");
 const buildTools = join(sdk, "build-tools/36.0.0");
 await mkdir(output, { recursive: true });
@@ -21,7 +22,7 @@ for (const [file, command, args] of [
 const entries = run("unzip", ["-Z1", apk]).trim().split("\n");
 await writeFile(join(output, "files.txt"), `${entries.join("\n")}\n`);
 const abis = [...new Set(entries.filter((path) => path.startsWith("lib/")).map((path) => path.split("/")[1]))].sort();
-assert.deepEqual(abis, ["arm64-v8a", "x86_64"]);
+assert.deepEqual(abis, expectedAbis);
 for (const abi of abis) assert(entries.includes(`lib/${abi}/libp2w_node.so`));
 await writeFile(join(output, "abis.txt"), `${entries.filter((path) => path.startsWith("lib/")).join("\n")}\n`);
 
