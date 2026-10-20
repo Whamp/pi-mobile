@@ -99,6 +99,8 @@ for (const [architecture, abi] of [
 		await copyFile(await realpath(join(prefix, "etc/tls/cert.pem")), join(generated, "assets/cert.pem"));
 		await rm(join(generated, "licenses"), { recursive: true, force: true });
 		await copyNotices(join(prefix, "share/doc"), join(generated, "licenses"), extracted);
+		// The pinned libicu archive contains a 404 response in place of its notice.
+		await copyFile(join(root, "android/licenses/ICU-LICENSE.txt"), join(generated, "licenses/libicu/LICENSE"));
 	}
 }
 await writeFile(join(generated, "assets/runtime-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
