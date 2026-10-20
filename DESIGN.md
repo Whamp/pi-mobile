@@ -18,7 +18,8 @@ Keep the implementation small: simple primitives, plain typed messages, no specu
 - Runtime foundations: `@earendil-works/pi-durable` and `@earendil-works/pi-ai`.
 - No dependency on `pi-coding-agent`, and do not use Pi's server/client packages.
 - Copy and simplify relevant coding-agent implementations with attribution and their useful tests when needed; do not copy its overloaded settings manager.
-- No MCP/codemode initially. Durable's basic coding tools suffice.
+- Coding tools and durable codemode use Pi 1.3.0. Codemode runs in a 128 MiB
+  QuickJS sandbox on a worker thread. No script timeout is supplied by the host.
 - GitHub repository: `badlogic/pi-mobile`, created and configured as `origin`. Source is committed and pushed; development continues on main.
 
 Suggested layout:

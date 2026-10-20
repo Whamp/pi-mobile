@@ -10,6 +10,7 @@
 		"check": "node scripts/biome-check.mjs && tsc --noEmit",
 		"format": "node scripts/biome-check.mjs --write",
 		"test": "node --test --test-concurrency=1 test/*.test.ts",
+		"torture": "node scripts/torture.ts",
 		"prepare": "husky"
 	},
 	"devDependencies": {
@@ -30,9 +31,10 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "1.0.0",
-		"@earendil-works/pi-ai": "1.0.0",
-		"@earendil-works/pi-durable": "1.0.0",
+		"@earendil-works/chord": "1.3.0",
+		"@earendil-works/pi-ai": "1.3.0",
+		"@earendil-works/pi-codemode": "1.3.0",
+		"@earendil-works/pi-durable": "1.3.0",
 		"lowlight": "3.3.0",
 		"proper-lockfile": "4.1.2",
 		"react": "19.3.0",

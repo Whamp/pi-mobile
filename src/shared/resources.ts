@@ -7,6 +7,7 @@ import { normalizePath } from "./config-json.ts";
 import { loadPromptResources, optionalText, type PromptResources } from "./context-files.ts";
 import { FileCredentials } from "./credentials.ts";
 import { ModelConfig } from "./model-config.ts";
+import { offeredModel, P2W_MODELS } from "./model-policy.ts";
 import { FileModelsStore } from "./model-store.ts";
 import { createMobileModels } from "./models.ts";
 import { applyModelConfig } from "./provider-config.ts";
@@ -228,27 +229,40 @@ export class Resources {
 			settings: this.settings,
 			credentials: this.credentials.metadata(),
 			errors: this.resourceErrors,
-			providers: this.models.getProviders().map((provider) => ({
-				id: provider.id,
-				name: provider.name,
-				loginMethods: [
-					...(provider.auth.apiKey?.login ? [{ type: "api_key" as const, label: provider.auth.apiKey.name }] : []),
-					...(provider.auth.oauth
-						? [{ type: "oauth" as const, label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name }]
-						: []),
-				],
-				authMethods: [
-					...(provider.auth.apiKey ? ["api_key" as const] : []),
-					...(provider.auth.oauth ? ["oauth" as const] : []),
-				],
-			})),
-			models: this.models.getModels().map((model) => ({
-				provider: model.provider,
-				modelId: model.id,
-				name: model.name,
-				thinkingLevels: getSupportedThinkingLevels(model),
-				contextWindow: model.contextWindow,
-			})),
+			providers: this.models
+				.getProviders()
+				.filter(
+					(provider) =>
+						process.env.PI_MOBILE_PROFILE !== "p2w" ||
+						this.options.fake ||
+						P2W_MODELS.some((model) => model.provider === provider.id),
+				)
+				.map((provider) => ({
+					id: provider.id,
+					name: provider.name,
+					loginMethods: [
+						...(provider.auth.apiKey?.login
+							? [{ type: "api_key" as const, label: provider.auth.apiKey.name }]
+							: []),
+						...(provider.auth.oauth
+							? [{ type: "oauth" as const, label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name }]
+							: []),
+					],
+					authMethods: [
+						...(provider.auth.apiKey ? ["api_key" as const] : []),
+						...(provider.auth.oauth ? ["oauth" as const] : []),
+					],
+				})),
+			models: this.models
+				.getModels()
+				.filter((model) => offeredModel({ provider: model.provider, modelId: model.id }))
+				.map((model) => ({
+					provider: model.provider,
+					modelId: model.id,
+					name: model.name,
+					thinkingLevels: getSupportedThinkingLevels(model),
+					contextWindow: model.contextWindow,
+				})),
 		};
 	}
 

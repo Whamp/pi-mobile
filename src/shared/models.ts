@@ -8,6 +8,7 @@ import {
 	fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
 import { SPEAKER_PREFIX } from "./sharing.ts";
+import { tortureScript } from "./torture.ts";
 
 // Explicit demo/test mode. Responses depend on committed input, not a volatile
 // queue position, so reopening an interrupted request is deterministic.
@@ -33,6 +34,17 @@ export function createMobileModels(fake: boolean, options: CreateModelsOptions =
 									.join("\n") ?? "");
 					const last = transcript.messages.at(-1);
 					if (last?.role !== "toolResult") {
+						const torture = /^torture ([a-zA-Z0-9-]+)$/.exec(text);
+						if (torture)
+							return fauxAssistantMessage(
+								[
+									fauxText("Running the 12-step durable codemode restart test."),
+									fauxToolCall("codemode", {
+										code: tortureScript(torture[1], Number(process.env.PI_MOBILE_TORTURE_SLEEP ?? "10")),
+									}),
+								],
+								{ stopReason: "toolUse" },
+							);
 						const call =
 							text === "tool"
 								? fauxToolCall("read", { path: "fixture.txt" })

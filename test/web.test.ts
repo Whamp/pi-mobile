@@ -199,7 +199,7 @@ test(
 			};
 			assert.equal(
 				model.buildTranscript(measuredView).contextTokens,
-				101001,
+				101002,
 				"reported usage plus trailing tool output",
 			);
 			assert.equal(
@@ -224,7 +224,7 @@ test(
 			};
 			assert.equal(
 				model.buildTranscript(omitted).contextTokens,
-				1,
+				2,
 				"omitted assistant usage cannot anchor the estimate",
 			);
 			const done = model.buildTranscript({

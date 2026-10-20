@@ -2,6 +2,20 @@
 
 Lightweight, mobile-first host for Pi Durable, running in Termux. Includes a React/Vite browser UI, independent session workers, shared configuration resources, and localhost provider login.
 
+The p2w Android slice uses Pi 1.3.0 and durable codemode alongside the existing
+read/write/edit/bash and subagent tools. `PI_MOBILE_PROFILE=p2w` restricts offered
+models to GPT-6.1 Sol (high, new-session default), GPT-6 Luna (max), GLM-5.3 Flash
+(max), GLM-5.3 (max), and Kimi K3-256K. All five exact IDs resolve in the shipped
+catalog; no custom definitions are needed. The regular host keeps its full catalog.
+
+`npm run torture` proves archive, worker SIGKILL, whole-stack SIGKILL, server
+SIGTERM, and owned process-group SIGKILL recovery using only the fake provider.
+It observes nested bash call 3 before killing, reopens the same session without
+resubmitting input, and checks the actual log, journal result and conversation.
+Set `PI_MOBILE_TORTURE_SLEEP=10` for the original timing; the default is 0.5 seconds
+for tests. Set `P2W_PROOF_DIR` to choose the output directory. Each method writes
+results.json, restart.log, events.jsonl, server.log, and verdict.txt (P1–P4).
+
 ## Run
 
 Requires Node 22.19 or newer and Git.
@@ -162,4 +176,5 @@ Biome 2.3.5 uses its Node WASM bindings on Termux. The runner uses Git's tracked
 
 `npm test` runs fake-provider tests plus an OpenAI-compatible HTTP fixture bound only to localhost—no paid/external provider calls. Coverage includes HTTP/WebSocket protections, catalog/FTS transactions, coding tools, process isolation, heartbeat/idle/background lifecycle, Durable crash recovery, pre-compaction history, interrupted index acknowledgements, two-process OAuth refresh, credential permissions/cancellation, model composition/header precedence, frozen in-flight configuration, independent worker resource reloads, fake API-key/OAuth interactions and callback races, cancellation/ownership/deadlines, persisted catalogs, Vite transforms, and transcript HTML escaping. Tests use temporary data directories, not your sessions.
 
-The repository is `badlogic/pi-mobile`. No dependency on pi-coding-agent, pi-server, pi-client, MCP, or codemode.
+The repository originated at `badlogic/pi-mobile`; p2w is built on `Whamp/pi-mobile`.
+No dependency on pi-coding-agent, pi-server, pi-client, or MCP.

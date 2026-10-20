@@ -1,0 +1,7 @@
+ts	phase	decision	why	evidence	result
+2026-10-20T05:20:37Z	frame	Keep the existing server and per-session worker ownership	The base already has lifecycle locks, tools, provider login and a tested UI	.audit/p2w-plan.md	baseline check clean; Android and recovery proof open
+2026-10-20T05:27:48Z	core	Upgrade Pi packages and add durable codemode with a 128 MiB sandbox	Use the published 1.3.0 API; no host script timeout	src/worker/main.ts	K1/K2/K3/K3b/K-pg short proofs pass
+2026-10-20T05:27:48Z	core	Correct proof conversation field and maintain the viewing heartbeat	The type check caught an undefined comparison; long timing exceeded the viewer lease	scripts/torture.ts	rerunning long proof with explicit conversation id and heartbeat
+2026-10-20T05:27:48Z	core	Migrate subagent result output and estimator expectations to Pi 1.3.0	Published tool results now use output; estimator uses 3.5 chars per token	src/worker/subagents.ts,test/web.test.ts	specific subagent and web tests pass
+2026-10-20T05:27:48Z	design	Choose patched APK-installed Node with system sh and preserved npm tree	Two candidates and an independent judge favor modern target and deterministic dependency names	.audit/p2w-architecture.md	Android execution still unverified
+2026-10-20T05:29:36Z	core	Verify all five kills and the original ten-second archive timing	The done bar requires step-3 interruption and autonomous continuation in the same conversation	/workspace/badlogic-torture/proof/torture	P1-P4 pass for K1/K2/K3/K3b/K-pg and real-10s/K1; 38 tests pass
