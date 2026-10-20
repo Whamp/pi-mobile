@@ -50,6 +50,8 @@ Gradle 8.13 is downloaded by the wrapper and checked against its SHA-256.
 The output is `android/app/build/outputs/apk/debug/app-debug.apk`, also copied to
 `/workspace/badlogic-torture/apk/p2w-debug.apk`. The inspector writes manifest,
 signature, ABI inventory, and a recursive secret-pattern scan to `proof/apk`.
+It also writes SHA-256/source-revision files and rejects an APK whose embedded
+source marker does not match the current Git commit; rebuild after the last commit.
 AWS's public SDK example access-key ID is recorded separately from secret matches.
 
 `runtime-lock.json` pins every public Termux archive and SHA-256. The build only

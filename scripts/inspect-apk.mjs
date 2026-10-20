@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const apk = process.argv[2] ?? "/workspace/badlogic-torture/apk/p2w-debug.apk";
 const output = process.argv[3] ?? "/workspace/badlogic-torture/proof/apk";
@@ -68,9 +69,21 @@ try {
 	}
 	await scan(join(temporary, "apk"), "apk");
 	await scan(join(temporary, "app"), "app");
+	const appVersion = (await readFile(join(temporary, "apk/assets/app-version.txt"), "utf8")).trim();
+	const sourceRevision = run("git", [
+		"-C",
+		fileURLToPath(new URL("../", import.meta.url)),
+		"rev-parse",
+		"HEAD",
+	]).trim();
+	assert(
+		appVersion.startsWith(`${sourceRevision.slice(0, 12)}-`),
+		"Rebuild the APK from the current commit before delivery",
+	);
 	const result = {
 		apk,
-		appVersion: (await readFile(join(temporary, "apk/assets/app-version.txt"), "utf8")).trim(),
+		appVersion,
+		sourceRevision,
 		bytes: (await stat(apk)).size,
 		sha256: createHash("sha256")
 			.update(await readFile(apk))
@@ -86,6 +99,8 @@ try {
 		limitations:
 			"Pattern scan and explicit clean staging; this is not a proof against every possible secret encoding. No host credential files were read or copied.",
 	};
+	await writeFile(join(output, "sha256.txt"), `${result.sha256}  ${basename(apk)}\n`);
+	await writeFile(join(output, "source-revision.txt"), `${sourceRevision}\n${appVersion}\n`);
 	await writeFile(join(output, "secret-scan.json"), `${JSON.stringify(result, null, 2)}\n`);
 	assert.equal(
 		matches.length,

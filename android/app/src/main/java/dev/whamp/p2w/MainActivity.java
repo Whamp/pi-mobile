@@ -14,6 +14,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.os.PowerManager;
+import android.os.ResultReceiver;
 import android.provider.Settings;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -39,6 +40,7 @@ public final class MainActivity extends Activity {
     private boolean loaded;
     private boolean restartRuntime;
     private boolean runtimeRequested;
+    private int runtimeRequest;
     private ValueCallback<Uri[]> fileChoice;
 
     @Override public void onCreate(Bundle state) {
@@ -85,6 +87,7 @@ public final class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (applyDebugIntent(intent)) {
+            runtimeRequest++;
             restartRuntime = true;
             runtimeRequested = false;
             loaded = false;
@@ -96,7 +99,18 @@ public final class MainActivity extends Activity {
     private void requestRuntime() {
         if (runtimeRequested || destroyed || !hasWindowFocus()) return;
         try {
-            startForegroundService(new Intent(this, RuntimeService.class).putExtra("restart", restartRuntime));
+            int request = ++runtimeRequest;
+            Intent service = new Intent(this, RuntimeService.class).putExtra("restart", restartRuntime);
+            service.putExtra("status", new ResultReceiver(handler) {
+                @Override protected void onReceiveResult(int result, Bundle data) {
+                    if (destroyed || request != runtimeRequest) return;
+                    if (result == 0) { restartRuntime = false; return; }
+                    runtimeRequested = false;
+                    status.setVisibility(TextView.VISIBLE);
+                    status.setText("Android delayed the agent service. Keep p2w open and tap here to retry.");
+                }
+            });
+            startForegroundService(service);
             runtimeRequested = true;
         } catch (ForegroundServiceStartNotAllowedException error) {
             status.setVisibility(TextView.VISIBLE);
@@ -178,6 +192,7 @@ public final class MainActivity extends Activity {
             .setMessage(fake ? "Switch back to real provider sign-in?" : "Use the deterministic fake provider? Its tools still run on this phone.")
             .setNegativeButton("Cancel", null).setPositiveButton("Switch", (dialog, which) -> {
                 getSharedPreferences("p2w", MODE_PRIVATE).edit().putBoolean("fake", !fake).apply();
+                runtimeRequest++;
                 restartRuntime = true;
                 runtimeRequested = false;
                 requestRuntime();

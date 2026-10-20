@@ -1,6 +1,7 @@
 package dev.whamp.p2w;
 
 import android.app.Notification;
+import android.app.ForegroundServiceStartNotAllowedException;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -10,6 +11,7 @@ import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.ResultReceiver;
 import android.util.Log;
 
 public final class RuntimeService extends Service {
@@ -18,24 +20,41 @@ public final class RuntimeService extends Service {
     private volatile Process server;
     private Thread supervisor;
     private PowerManager.WakeLock wakeLock;
+    private Notification notification;
 
     @Override public void onCreate() {
         super.onCreate();
         NotificationManager notifications = getSystemService(NotificationManager.class);
         notifications.createNotificationChannel(new NotificationChannel("agent", "On-device agent", NotificationManager.IMPORTANCE_LOW));
         PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        Notification notification = new Notification.Builder(this, "agent")
+        notification = new Notification.Builder(this, "agent")
             .setSmallIcon(R.drawable.ic_p2w).setContentTitle("p2w is running on this phone")
             .setContentText("Durable sessions and local tools are available. Tap to open.")
             .setContentIntent(open).setOngoing(true).build();
-        if (Build.VERSION.SDK_INT >= 34) startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
-        else startForeground(1, notification);
-        wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "p2w:agent");
-        wakeLock.acquire();
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && intent.getBooleanExtra("restart", false) && server != null) server.destroy();
+        ResultReceiver status = intent == null ? null : intent.getParcelableExtra("status", ResultReceiver.class);
+        try {
+            if (Build.VERSION.SDK_INT >= 34) startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+            else startForeground(1, notification);
+        } catch (ForegroundServiceStartNotAllowedException error) {
+            Log.w("p2w", "Android denied foreground promotion; waiting for a visible Activity retry", error);
+            if (status != null) status.send(1, null);
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
+        if (status != null) status.send(0, null);
+        if (wakeLock == null) {
+            wakeLock = getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "p2w:agent");
+            wakeLock.acquire();
+        }
+        if (intent != null && intent.getBooleanExtra("restart", false)) {
+            synchronized (lifecycle) {
+                Process child = server;
+                if (child != null) child.destroy();
+            }
+        }
         if (supervisor == null) {
             supervisor = new Thread(this::supervise, "p2w-runtime");
             supervisor.start();
