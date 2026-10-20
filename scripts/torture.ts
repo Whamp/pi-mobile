@@ -246,7 +246,15 @@ export async function runTorture(method: KillMethod, outputDirectory: string, sl
 		event("failure", { error: String(error) });
 		await writeFile(
 			join(outputDirectory, "failure.json"),
-			JSON.stringify({ error: String(error), view: client ? [...client.views.values()] : [] }, null, 2),
+			JSON.stringify(
+				{
+					error: String(error),
+					workers: client ? [...client.workers.entries()] : [],
+					view: client ? [...client.views.values()] : [],
+				},
+				null,
+				2,
+			),
 		);
 		throw error;
 	} finally {
