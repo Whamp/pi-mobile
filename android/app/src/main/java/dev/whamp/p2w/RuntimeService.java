@@ -13,6 +13,7 @@ import android.os.PowerManager;
 import android.util.Log;
 
 public final class RuntimeService extends Service {
+    private final Object lifecycle = new Object();
     private volatile boolean stopping;
     private volatile Process server;
     private Thread supervisor;
@@ -48,12 +49,16 @@ public final class RuntimeService extends Service {
             try {
                 RuntimeInstaller layout = RuntimeInstaller.install(this);
                 boolean fake = BuildConfig.DEBUG && getSharedPreferences("p2w", MODE_PRIVATE).getBoolean("fake", false);
-                Process child = layout.start(fake);
-                server = child;
+                Process child;
+                synchronized (lifecycle) {
+                    if (stopping) return;
+                    child = layout.start(fake);
+                    server = child;
+                }
                 long started = System.currentTimeMillis();
                 Log.i("p2w", "Node server started fake=" + fake);
                 int code = child.waitFor();
-                server = null;
+                synchronized (lifecycle) { if (server == child) server = null; }
                 Log.i("p2w", "Node server exited code=" + code);
                 failures = System.currentTimeMillis() - started > 30000 ? 0 : failures + 1;
             } catch (Exception error) {
@@ -66,9 +71,11 @@ public final class RuntimeService extends Service {
     }
 
     @Override public void onDestroy() {
-        stopping = true;
-        Process child = server;
-        if (child != null) child.destroy();
+        synchronized (lifecycle) {
+            stopping = true;
+            Process child = server;
+            if (child != null) child.destroy();
+        }
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         super.onDestroy();
     }

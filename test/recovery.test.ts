@@ -57,3 +57,26 @@ test(
 		}
 	},
 );
+
+test("Android keeps recovering after more than five unrelated worker deaths", { timeout: 90_000 }, async () => {
+	const directory = await mkdtemp(join(tmpdir(), "p2w-retry-"));
+	const app = await createApp({ directory, fake: true, recover: true });
+	try {
+		const session = app.catalog.create(directory, { provider: "faux", modelId: "faux-1" }, "off");
+		await app.workers.open(session.id);
+		for (let death = 0; death < 6; death++) {
+			const pid = app.workers.status(session.id).pid;
+			assert(pid);
+			process.kill(pid, "SIGKILL");
+			await until(() => {
+				const current = app.workers.status(session.id);
+				return current.running && current.pid !== pid && !current.error;
+			}, 20_000);
+		}
+		await app.workers.command(session.id, { type: "prompt", content: "still alive", requestId: "after-six" });
+		await until(() => app.catalog.search("still alive").messages.some((message) => message.role === "assistant"));
+	} finally {
+		await app.close();
+		await rm(directory, { recursive: true, force: true });
+	}
+});

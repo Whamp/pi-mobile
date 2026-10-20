@@ -270,17 +270,16 @@ export class Workers {
 			if (this.options.recover && !current.stopping && !this.closing && this.catalog.resumable().includes(id)) {
 				const attempt = (this.restarts.get(id) ?? 0) + 1;
 				this.restarts.set(id, attempt);
-				if (attempt <= 5)
-					this.retryTimers.set(
-						id,
-						setTimeout(
-							() => {
-								this.retryTimers.delete(id);
-								void this.open(id).catch(() => {});
-							},
-							Math.min(500 * 2 ** (attempt - 1), 10_000),
-						),
-					);
+				this.retryTimers.set(
+					id,
+					setTimeout(
+						() => {
+							this.retryTimers.delete(id);
+							void this.open(id).catch(() => {});
+						},
+						Math.min(500 * 2 ** (attempt - 1), 10_000),
+					),
+				);
 			}
 		});
 		// Observe boot rejection even if shutdown kills a worker before a caller awaits it.

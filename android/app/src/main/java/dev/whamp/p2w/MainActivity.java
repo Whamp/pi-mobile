@@ -32,6 +32,7 @@ public final class MainActivity extends Activity {
     static final String ORIGIN = "http://127.0.0.1:18787";
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WebView web;
+    private LinearLayout layout;
     private TextView status;
     private boolean destroyed;
     private boolean loaded;
@@ -46,14 +47,12 @@ public final class MainActivity extends Activity {
             getSharedPreferences("p2w", MODE_PRIVATE).edit().putBoolean("fake", fake).apply();
         }
         startForegroundService(new Intent(this, RuntimeService.class).putExtra("restart", restart));
-        LinearLayout layout = new LinearLayout(this);
+        layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         status = new TextView(this);
         status.setText("p2w · Starting the on-device runtime…\nFirst launch unpacks the app. This can take a moment.");
         status.setPadding(24, 32, 24, 24);
         layout.addView(status);
-        web = new WebView(this);
-        layout.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         setContentView(layout);
         if (Build.VERSION.SDK_INT >= 30) layout.setOnApplyWindowInsetsListener((view, insets) -> {
             var bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
@@ -61,6 +60,14 @@ public final class MainActivity extends Activity {
             view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, keyboard.bottom));
             return WindowInsets.CONSUMED;
         });
+        pollHealth();
+        getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            () -> { if (web != null && web.canGoBack()) web.goBack(); else finish(); });
+    }
+
+    private void createWebView() {
+        web = new WebView(this);
+        layout.addView(web, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         web.getSettings().setJavaScriptEnabled(true);
         web.getSettings().setDomStorageEnabled(true);
         web.getSettings().setAllowFileAccess(false);
@@ -96,9 +103,6 @@ public final class MainActivity extends Activity {
                 return true;
             }
         });
-        pollHealth();
-        getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-            () -> { if (web.canGoBack()) web.goBack(); else finish(); });
     }
 
     private boolean navigate(Uri uri) {
@@ -154,7 +158,12 @@ public final class MainActivity extends Activity {
             boolean healthy = ready;
             handler.post(() -> {
                 if (destroyed || loaded) return;
-                if (healthy) { loaded = true; status.setVisibility(TextView.GONE); web.loadUrl(ORIGIN + "/"); }
+                if (healthy) {
+                    loaded = true;
+                    if (web == null) createWebView();
+                    status.setVisibility(TextView.GONE);
+                    web.loadUrl(ORIGIN + "/");
+                }
                 else handler.postDelayed(this::pollHealth, 700);
             });
         }, "p2w-health").start();
@@ -179,7 +188,7 @@ public final class MainActivity extends Activity {
         destroyed = true;
         handler.removeCallbacksAndMessages(null);
         if (fileChoice != null) { fileChoice.onReceiveValue(null); fileChoice = null; }
-        web.destroy();
+        if (web != null) web.destroy();
         super.onDestroy();
     }
 }
