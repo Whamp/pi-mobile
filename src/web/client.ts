@@ -70,12 +70,27 @@ export class MobileClient {
 		if (!this.stopped) return;
 		this.stopped = false;
 		this.heartbeat = setInterval(() => {
-			if (this.state.connected && this.state.activeId)
-				void this.request({ type: "heartbeat", sessionId: this.state.activeId }).catch(() => {});
+			const { connected, activeId, conversationId } = this.state;
+			if (connected && activeId)
+				void this.request({ type: "heartbeat", sessionId: activeId }).catch(() => {
+					if (
+						this.state.connected &&
+						this.state.activeId === activeId &&
+						this.state.conversationId === conversationId
+					)
+						void this.open(activeId, conversationId, false).catch((error: Error) => this.setError(error.message));
+				});
 		}, 15_000);
 		window.addEventListener("popstate", this.navigate);
+		document.addEventListener("visibilitychange", this.visible);
 		void this.connect();
 	}
+	private readonly visible = () => {
+		if (document.visibilityState === "visible" && this.state.connected && this.state.activeId)
+			void this.open(this.state.activeId, this.state.conversationId, false).catch((error: Error) =>
+				this.setError(error.message),
+			);
+	};
 	private readonly navigate = () => {
 		const match = /^\/s\/([^/]+)(?:\/a\/(\d+))?$/.exec(location.pathname);
 		if (match?.[1])
@@ -269,6 +284,7 @@ export class MobileClient {
 	stop(): void {
 		this.stopped = true;
 		window.removeEventListener("popstate", this.navigate);
+		document.removeEventListener("visibilitychange", this.visible);
 		this.generation++;
 		clearTimeout(this.retry);
 		clearInterval(this.heartbeat);

@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { ImageContent, Usage } from "@earendil-works/pi-ai";
+import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import {
 	AssistantEntry,
 	type Conversation,
@@ -24,6 +25,7 @@ import {
 	type UserInput,
 	type WatchEnd,
 } from "@earendil-works/pi-durable";
+import { createCodemodeExtension } from "@earendil-works/pi-durable/codemode";
 import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { CodingTools } from "@earendil-works/pi-durable/tools";
@@ -164,6 +166,7 @@ async function start(init: Extract<WorkerCommand, { type: "init" }>): Promise<vo
 	const models = localResources.models;
 	const registry = createRegistry();
 	registry.install(CodingTools);
+	registry.install(createCodemodeExtension({ sandbox: new CodemodeSandbox({ memoryLimitBytes: 128 * 1024 * 1024 }) }));
 	registry.install(createSubagentExtension(models));
 	function installCoding(): void {
 		const prompt = localResources.prompt;

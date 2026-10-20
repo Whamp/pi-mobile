@@ -15,6 +15,7 @@ export async function until(predicate: () => boolean, timeout = 15_000): Promise
 }
 
 export class Client {
+	private readonly timeoutMs: number;
 	readonly socket: WebSocket;
 	readonly views = new Map<string, ConversationView>();
 	readonly workers = new Map<string, WorkerStatus>();
@@ -24,7 +25,8 @@ export class Client {
 		{ resolve: (data: unknown) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
 	>();
 
-	constructor(url: string, cookie: string, headers: Record<string, string> = {}) {
+	constructor(url: string, cookie: string, headers: Record<string, string> = {}, timeoutMs = 30_000) {
+		this.timeoutMs = timeoutMs;
 		this.socket = new WebSocket(`${url.replace("http:", "ws:")}/ws`, {
 			headers: { Cookie: cookie, Origin: url, ...headers },
 		});
@@ -63,11 +65,11 @@ export class Client {
 		});
 	}
 
-	static async connect(url: string): Promise<Client> {
+	static async connect(url: string, timeoutMs = 30_000): Promise<Client> {
 		const response = await fetch(url);
 		const cookie = response.headers.get("set-cookie")?.split(";")[0];
 		assert(cookie);
-		const client = new Client(url, cookie);
+		const client = new Client(url, cookie, {}, timeoutMs);
 		await new Promise<void>((done, reject) => {
 			client.socket.once("open", done);
 			client.socket.once("error", reject);
@@ -81,7 +83,7 @@ export class Client {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
 				reject(new Error(`Request timed out: ${action.type}`));
-			}, 30_000);
+			}, this.timeoutMs);
 			this.pending.set(id, { resolve, reject, timer });
 		});
 		this.socket.send(JSON.stringify({ id, action }));

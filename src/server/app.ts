@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { posix, resolve } from "node:path";
 import { type ModelRef, ROOT_CONVERSATION_ID } from "@earendil-works/pi-durable";
 import { WebSocket, WebSocketServer } from "ws";
+import { offeredModel, P2W_MODELS, p2wModel } from "../shared/model-policy.ts";
 import { processLock } from "../shared/process-lock.ts";
 import { type ClientAction, errorMessage, type ServerEvent, type SessionSummary } from "../shared/protocol.ts";
 import { type ResourceOptions, Resources } from "../shared/resources.ts";
@@ -103,6 +104,7 @@ export async function createApp(options: AppOptions = {}) {
 						path === sessionPath ||
 						path.startsWith(`${sessionPath}/a/`) ||
 						path.startsWith("/src/web/") ||
+						path.startsWith("/assets/") ||
 						path === "/src/shared/sharing.ts" ||
 						path.startsWith("/node_modules/.vite/") ||
 						path === "/@vite/client" ||
@@ -122,7 +124,13 @@ export async function createApp(options: AppOptions = {}) {
 	const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, perMessageDeflate: false });
 	const clients = new Map<WebSocket, { id: string; pending: number; remote: boolean; guest?: GuestAccess }>();
 	let closing: Promise<void> | undefined;
-	const defaultModel = options.defaultModel ?? (options.fake ? { provider: "faux", modelId: "faux-1" } : undefined);
+	const defaultModel =
+		options.defaultModel ??
+		(options.fake
+			? { provider: "faux", modelId: "faux-1" }
+			: process.env.PI_MOBILE_PROFILE === "p2w"
+				? { provider: P2W_MODELS[0].provider, modelId: P2W_MODELS[0].modelId }
+				: undefined);
 	const resources = new Resources({ directory, fake: options.fake, createModels: options.createModels });
 	await resources.start();
 	const models = resources.models;
@@ -321,6 +329,7 @@ export async function createApp(options: AppOptions = {}) {
 				const model = input.model ?? resources.settings.defaultModel ?? defaultModel;
 				if (!model) throw new Error("Select a model or configure PI_MOBILE_PROVIDER and PI_MOBILE_MODEL");
 				if (!models.getModel(model.provider, model.modelId)) throw new Error("Unknown model");
+				if (!offeredModel(model)) throw new Error("Model is not offered in p2w");
 				const cwd = resolve(
 					input.cwd === "~"
 						? homedir()
@@ -333,7 +342,10 @@ export async function createApp(options: AppOptions = {}) {
 				const session = catalog.create(
 					cwd,
 					model,
-					input.thinkingLevel ?? resources.settings.thinkingLevel ?? "off",
+					input.thinkingLevel ??
+						resources.settings.thinkingLevel ??
+						(process.env.PI_MOBILE_PROFILE === "p2w" ? p2wModel(model)?.thinkingLevel : undefined) ??
+						"off",
 					input.title,
 				);
 				broadcastCatalog();
@@ -388,6 +400,7 @@ export async function createApp(options: AppOptions = {}) {
 				const session = catalog.get(input.sessionId);
 				const model = input.model ?? session.model;
 				if (!models.getModel(model.provider, model.modelId)) throw new Error("Unknown model");
+				if (!offeredModel(model)) throw new Error("Model is not offered in p2w");
 				await workers.command(input.sessionId, input);
 				catalog.configure(input.sessionId, model, input.thinkingLevel ?? session.thinkingLevel);
 				broadcastCatalog();

@@ -31,10 +31,13 @@ type RunningWorker = {
 	usage?: Usage;
 	booting: boolean;
 	stopping: boolean;
-	pending: Map<string, { resolve: (result: WorkerResult) => void; reject: (error: Error) => void }>;
+	pending: Map<
+		string,
+		{ resolve: (result: WorkerResult) => void; reject: (error: Error) => void; viewConversationId?: number }
+	>;
 	idleTimer?: ReturnType<typeof setTimeout>;
 };
-export type WorkerOptions = { fake?: boolean; idleMs?: number; heartbeatMs?: number };
+export type WorkerOptions = { fake?: boolean; idleMs?: number; heartbeatMs?: number; recover?: boolean };
 type Viewer = { sessionId: string; conversationId: number; expires: number };
 
 export class Workers {
@@ -47,6 +50,8 @@ export class Workers {
 	private readonly listeners = new Set<(event: ServerEvent) => void>();
 	private readonly sweep: ReturnType<typeof setInterval>;
 	private closing = false;
+	private readonly restarts = new Map<string, number>();
+	private readonly retryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	constructor(catalog: Catalog, options: WorkerOptions = {}) {
 		this.catalog = catalog;
@@ -54,6 +59,7 @@ export class Workers {
 			fake: options.fake ?? false,
 			idleMs: options.idleMs ?? 300_000,
 			heartbeatMs: options.heartbeatMs ?? 45_000,
+			recover: options.recover ?? false,
 		};
 		this.sweep = setInterval(
 			() => {
@@ -132,6 +138,9 @@ export class Workers {
 			await worker.ready;
 			return worker;
 		}
+		clearTimeout(this.retryTimers.get(id));
+		this.retryTimers.delete(id);
+		if (this.options.recover && !allowArchived) this.catalog.setResume(id, true);
 		const child = fork(
 			new URL(import.meta.url.endsWith(".ts") ? "../worker/main.ts" : "../worker/main.js", import.meta.url),
 			[],
@@ -224,6 +233,17 @@ export class Workers {
 					case "result": {
 						const pending = current.pending.get(event.id);
 						current.pending.delete(event.id);
+						// IPC can dispatch the next frame before a resolved Promise's continuation.
+						// Install the base synchronously so that frame cannot be dropped.
+						if (pending?.viewConversationId !== undefined && event.view) {
+							current.views.set(pending.viewConversationId, event.view);
+							this.emit({
+								type: "snapshot",
+								sessionId: id,
+								conversationId: pending.viewConversationId,
+								view: event.view,
+							});
+						}
 						if (event.error) pending?.reject(new Error(event.error));
 						else
 							pending?.resolve({ submissionId: event.submissionId, restored: event.restored, view: event.view });
@@ -254,6 +274,20 @@ export class Workers {
 			this.running.delete(id);
 			exited.resolve();
 			this.changed(id);
+			if (this.options.recover && !current.stopping && !this.closing && this.catalog.resumable().includes(id)) {
+				const attempt = (this.restarts.get(id) ?? 0) + 1;
+				this.restarts.set(id, attempt);
+				this.retryTimers.set(
+					id,
+					setTimeout(
+						() => {
+							this.retryTimers.delete(id);
+							void this.open(id).catch(() => {});
+						},
+						Math.min(500 * 2 ** (attempt - 1), 10_000),
+					),
+				);
+			}
 		});
 		// Observe boot rejection even if shutdown kills a worker before a caller awaits it.
 		void current.ready.catch(() => {});
@@ -273,10 +307,7 @@ export class Workers {
 					.filter((viewer) => viewer.sessionId === id)
 					.map((viewer) => viewer.conversationId),
 			);
-			for (const conversationId of viewed) {
-				const view = await this.watch(id, current, conversationId).catch(() => undefined);
-				if (view) this.emit({ type: "snapshot", sessionId: id, conversationId, view });
-			}
+			for (const conversationId of viewed) await this.watch(id, current, conversationId).catch(() => undefined);
 			return current;
 		} catch (error) {
 			await this.terminate(id);
@@ -295,10 +326,17 @@ export class Workers {
 
 	private call(id: string, worker: RunningWorker, message: (commandId: string) => WorkerCommand) {
 		const commandId = randomUUID();
-		const result = new Promise<WorkerResult>((resolve, reject) => worker.pending.set(commandId, { resolve, reject }));
+		const command = message(commandId);
+		const result = new Promise<WorkerResult>((resolve, reject) =>
+			worker.pending.set(commandId, {
+				resolve,
+				reject,
+				...(command.type === "watch" ? { viewConversationId: command.conversationId } : {}),
+			}),
+		);
 		this.reconcile(id);
 		try {
-			this.send(worker, message(commandId));
+			this.send(worker, command);
 		} catch (error) {
 			worker.pending.delete(commandId);
 			this.reconcile(id);
@@ -316,8 +354,7 @@ export class Workers {
 		const pending = this.call(id, worker, (commandId) => ({ type: "watch", id: commandId, conversationId }))
 			.then((result) => {
 				if (!result.view) throw new Error("Worker returned no view");
-				worker.views.set(conversationId, result.view);
-				return result.view;
+				return worker.views.get(conversationId) ?? result.view;
 			})
 			.finally(() => {
 				if (worker.watching.get(conversationId) === pending) worker.watching.delete(conversationId);
@@ -350,6 +387,18 @@ export class Workers {
 		return this.serial(id, async () => {
 			await this.start(id);
 		});
+	}
+
+	async recover(): Promise<void> {
+		if (!this.options.recover) return;
+		for (const id of this.catalog.resumable()) {
+			try {
+				await this.open(id);
+			} catch (error) {
+				this.errors.set(id, errorMessage(error));
+				this.changed(id);
+			}
+		}
 	}
 
 	/** Make `clientId` view one conversation of a session and return its current view. */
@@ -433,6 +482,7 @@ export class Workers {
 						(viewer) => viewer.sessionId === id && viewer.expires > Date.now(),
 					);
 					if (this.running.get(id) === worker && !viewedNow && worker.tasks === 0 && worker.pending.size === 0) {
+						this.catalog.setResume(id, false);
 						await this.terminate(id);
 					}
 				}).catch(() => {});
@@ -458,6 +508,9 @@ export class Workers {
 	stop(id: string): Promise<void> {
 		return this.serial(id, async () => {
 			this.catalog.get(id);
+			this.catalog.setResume(id, false);
+			clearTimeout(this.retryTimers.get(id));
+			this.retryTimers.delete(id);
 			await this.terminate(id);
 		});
 	}
@@ -465,6 +518,9 @@ export class Workers {
 	archive(id: string): Promise<void> {
 		return this.serial(id, async () => {
 			this.catalog.archive(id, true);
+			this.catalog.setResume(id, false);
+			clearTimeout(this.retryTimers.get(id));
+			this.retryTimers.delete(id);
 			await this.terminate(id);
 		});
 	}
@@ -488,6 +544,8 @@ export class Workers {
 
 	async close(): Promise<void> {
 		this.closing = true;
+		for (const timer of this.retryTimers.values()) clearTimeout(timer);
+		this.retryTimers.clear();
 		clearInterval(this.sweep);
 		await Promise.all([...this.running.keys()].map((id) => this.terminate(id)));
 		await Promise.allSettled([...this.locks.values()]);

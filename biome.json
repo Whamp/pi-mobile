@@ -13,6 +13,6 @@
 		}
 	},
 	"files": {
-		"includes": ["src/**", "test/**", "scripts/**", "*.json", "!package-lock.json"]
+		"includes": ["src/**", "test/**", "scripts/**", "*.json", "!scripts/**/*.sh", "!package-lock.json"]
 	}
 }

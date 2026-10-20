@@ -16,6 +16,7 @@ import {
 	type TaskId,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
+import { offeredModel } from "../shared/model-policy.ts";
 
 export const SUBAGENT_EXTENSION = "subagent-tools";
 const CODING_TOOLS = ["read", "write", "edit", "bash"];
@@ -156,7 +157,7 @@ export function createSubagentExtension(models: Models) {
 		execute: async (args, api, context) => {
 			const { action, name, message, followUp } = args;
 			const reply = (text: string, extra: Partial<SubagentDetails> = {}, isError = false) => ({
-				content: [{ type: "text" as const, text }],
+				output: [{ type: "text" as const, text }],
 				details: { action, ...(name === undefined ? {} : { name }), ...extra } satisfies SubagentDetails,
 				isError,
 			});
@@ -164,7 +165,10 @@ export function createSubagentExtension(models: Models) {
 
 			if (action === "models") {
 				const available = await models.getAvailable(undefined, { signal: AbortSignal.timeout(10_000) });
-				const lines = available.slice(0, 200).map((model) => `${model.provider}/${model.id} (${model.name})`);
+				const lines = available
+					.filter((model) => offeredModel({ provider: model.provider, modelId: model.id }))
+					.slice(0, 200)
+					.map((model) => `${model.provider}/${model.id} (${model.name})`);
 				return reply(lines.length ? lines.join("\n") : "No models with configured credentials.");
 			}
 			if (action === "status") {
@@ -206,6 +210,7 @@ export function createSubagentExtension(models: Models) {
 				const model = ref ? models.getModel(ref.provider, ref.modelId) : undefined;
 				if (!ref || !model)
 					return reply(`Unknown model ${args.model ?? "(none)"}. Use action models to list them.`, {}, true);
+				if (!offeredModel(ref)) return reply("Model is not offered in p2w.", {}, true);
 				if (args.thinkingLevel !== undefined && !THINKING.includes(args.thinkingLevel))
 					return reply(`Invalid thinkingLevel ${args.thinkingLevel}.`, {}, true);
 				const requested = (args.thinkingLevel ?? own.thinkingLevel) as ModelThinkingLevel;

@@ -2,6 +2,23 @@
 
 Lightweight, mobile-first host for Pi Durable, running in Termux. Includes a React/Vite browser UI, independent session workers, shared configuration resources, and localhost provider login.
 
+The p2w Android slice uses Pi 1.3.0 and durable codemode alongside the existing
+read/write/edit/bash and subagent tools. `PI_MOBILE_PROFILE=p2w` restricts offered
+models to GPT-6.1 Sol (high, new-session default), GPT-6 Luna (max), GLM-5.3 Flash
+(max), GLM-5.3 (max), and Kimi K3-256K. All five exact IDs resolve in the shipped
+catalog; no custom definitions are needed. The regular host keeps its full catalog.
+
+For the native Android APK, runtime architecture, build steps, sideloading,
+provider setup, and debug proof mode, see [android/README.md](android/README.md).
+
+`npm run torture` proves archive, worker SIGKILL, whole-stack SIGKILL, server
+SIGTERM, and owned process-group SIGKILL recovery using only the fake provider.
+It observes nested bash call 3 before killing, reopens the same session without
+resubmitting input, and checks the actual log, journal result and conversation.
+Set `PI_MOBILE_TORTURE_SLEEP=10` for the original timing; the default is 0.5 seconds
+for tests. Set `P2W_PROOF_DIR` to choose the output directory. Each method writes
+results.json, restart.log, events.jsonl, server.log, and verdict.txt (P1–P4).
+
 ## Run
 
 Requires Node 22.19 or newer and Git.
@@ -60,7 +77,7 @@ Session and subagent views have URLs (`/s/<session-id>`, `/s/<session-id>/a/<con
 - SQLite session catalog, cwd grouping/order, pins, editable first-input titles, archive/restore, and FTS search.
 - One Durable process and separate SQLite storage per running session, with read/write/edit/bash tools.
 - Node IPC and a typed WebSocket API with committed snapshots and Chord operation batches.
-- New sessions start immediately; existing sessions start on open. Server startup starts none.
+- New sessions start immediately; existing sessions start on open. The regular host starts no workers at startup. Android enables persistent recovery of previously running sessions, without submitting input again.
 - Heartbeats keep viewed workers alive. Five minutes without viewers **and** any foreground/background task stops a worker. Viewer leases expire after 45 seconds.
 - Disconnects leave work running. Stop/archive/server shutdown terminate processes without semantically aborting Durable tasks. Open resumes committed work.
 - Kernel socket locks prevent overlapping servers/storage owners, including after a server crash. Termux/Linux use abstract sockets, automatically released on process exit. Other Unix platforms use temporary socket files; an unclean exit may require removing stale socket files after confirming no owner remains.
@@ -71,7 +88,7 @@ Session and subagent views have URLs (`/s/<session-id>`, `/s/<session-id>/a/<con
 
 Indexing is asynchronous. After a crash, the index may lag until the session is opened or rebuilt. Rebuilding restarts a running worker; an archived session is scanned with scheduling paused, then stopped again. SQLite WAL handles process crashes; power-loss guarantees and exactly-once external tool effects are not implied. Orderly worker termination reaps its shell processes; a worker SIGKILL can leave external effects/processes behind.
 
-Artifacts remain unimplemented. Markdown is a small safe subset (no tables or HTML); fenced code and file tool output are syntax highlighted with lowlight/highlight.js, rendered as React elements rather than HTML. The UI runs through Vite middleware, not a production bundle; install dev dependencies too. Layout was checked with headless Chromium at phone and desktop sizes, not on a physical device. See [DESIGN.md](DESIGN.md).
+Artifacts remain unimplemented. Markdown is a small safe subset (no tables or HTML); fenced code and file tool output are syntax highlighted with lowlight/highlight.js, rendered as React elements rather than HTML. The regular host uses Vite middleware and needs dev dependencies; the Android APK uses a static production bundle. Layout verification and physical-device limits are recorded in the proof artifacts and PR. See [DESIGN.md](DESIGN.md).
 
 ## Subagents
 
@@ -162,4 +179,5 @@ Biome 2.3.5 uses its Node WASM bindings on Termux. The runner uses Git's tracked
 
 `npm test` runs fake-provider tests plus an OpenAI-compatible HTTP fixture bound only to localhost—no paid/external provider calls. Coverage includes HTTP/WebSocket protections, catalog/FTS transactions, coding tools, process isolation, heartbeat/idle/background lifecycle, Durable crash recovery, pre-compaction history, interrupted index acknowledgements, two-process OAuth refresh, credential permissions/cancellation, model composition/header precedence, frozen in-flight configuration, independent worker resource reloads, fake API-key/OAuth interactions and callback races, cancellation/ownership/deadlines, persisted catalogs, Vite transforms, and transcript HTML escaping. Tests use temporary data directories, not your sessions.
 
-The repository is `badlogic/pi-mobile`. No dependency on pi-coding-agent, pi-server, pi-client, MCP, or codemode.
+The repository originated at `badlogic/pi-mobile`; p2w is built on `Whamp/pi-mobile`.
+No dependency on pi-coding-agent, pi-server, pi-client, or MCP.

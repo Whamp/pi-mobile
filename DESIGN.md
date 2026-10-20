@@ -18,7 +18,8 @@ Keep the implementation small: simple primitives, plain typed messages, no specu
 - Runtime foundations: `@earendil-works/pi-durable` and `@earendil-works/pi-ai`.
 - No dependency on `pi-coding-agent`, and do not use Pi's server/client packages.
 - Copy and simplify relevant coding-agent implementations with attribution and their useful tests when needed; do not copy its overloaded settings manager.
-- No MCP/codemode initially. Durable's basic coding tools suffice.
+- Coding tools and durable codemode use Pi 1.3.0. Codemode runs in a 128 MiB
+  QuickJS sandbox on a worker thread. No script timeout is supplied by the host.
 - GitHub repository: `badlogic/pi-mobile`, created and configured as `origin`. Source is committed and pushed; development continues on main.
 
 Suggested layout:
@@ -70,7 +71,7 @@ Worker PID, running/busy state, and current process errors are live server state
 - One separate Node process per running session.
 - Each worker exclusively owns that session's Durable Harness and storage.
 - Reopening storage resumes unfinished Durable work.
-- Server startup reads the catalog but starts **no workers**.
+- Normal host startup reads the catalog but starts **no workers**. Android resume mode restarts saved active workers independently of a browser connection.
 - Existing workers start lazily when a user opens a session.
 - Closing/disconnecting the browser does not interrupt ongoing work.
 - Keep a worker alive while any client views it or while any foreground/background task exists.
@@ -179,7 +180,9 @@ Do not claim login, resource reload, artifacts, or subagents are present until i
 
 ## Current implementation state
 
-The localhost page hosts a mobile-first React UI through Vite middleware, with `/health` and a cookie-protected `/ws` API. Vite's HMR socket passes the same loopback/cookie/Origin gate. Source modules hot reload without restarting workers; full dependency installation is currently required, and production bundling is not implemented. The catalog, FTS index, worker manager, Durable workers, snapshots/deltas, heartbeat leases, and five-minute idle shutdown are implemented. `src/shared/protocol.ts` defines the API; README describes running real environment-key sessions or the explicit fake-provider demo.
+The regular localhost host serves the React UI through Vite middleware, with `/health` and a cookie-protected `/ws` API. Vite's HMR socket passes the same loopback/cookie/Origin gate. Source modules hot reload without restarting workers; this development path requires full dependencies. The Android build compiles the same server/worker layout and substitutes static frontend hosting, retaining the owner/guest gate and CSP nonce. See android/README.md and .audit/p2w-architecture.md. The catalog, FTS index, worker manager, Durable workers, snapshots/deltas, heartbeat leases, and five-minute idle shutdown are implemented. `src/shared/protocol.ts` defines the API.
+
+Android enables persisted resume intent (`PI_MOBILE_RESUME=1`). Its server restarts marked workers after full process death, independently of browser reconnection. Archive, explicit worker stop, and idle eviction clear intent; orderly server shutdown and crashes preserve it. Individual worker crashes keep retrying with backoff bounded at ten seconds; six consecutive crash recoveries are tested. The normal host retains lazy startup. Browser visibility restoration and an expired heartbeat reacquire a fresh snapshot without resubmitting input.
 
 Workers send paged root-history index batches; the server commits each before acknowledgement. The catch-up cursor advances only after the entire bounded range has committed, so interrupted scans retry idempotently. Rebuilding an archived index uses a temporary worker with task scheduling paused. Search can lag after a crash until open/rebuild catches it up.
 

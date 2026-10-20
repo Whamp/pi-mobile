@@ -1,6 +1,7 @@
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
 import type { ModelRef } from "@earendil-works/pi-durable";
 import { useState } from "react";
+import { p2wModel } from "../shared/model-policy.ts";
 import type { ResourceSnapshot } from "../shared/resources.ts";
 import { CheckIcon, SearchIcon } from "./icons.tsx";
 import { Sheet } from "./Sheet.tsx";
@@ -56,7 +57,9 @@ export function matchingModels(resources: ResourceSnapshot | undefined, query: s
 	const providerName = new Map(resources?.providers.map((provider) => [provider.id, provider.name]));
 	return (resources?.models ?? []).filter(
 		(model) =>
-			signedIn.has(model.provider) &&
+			(resources?.profile === "p2w" ||
+				signedIn.has(model.provider) ||
+				(resources?.fake && model.provider === "faux")) &&
 			terms.every((term) =>
 				`${model.name} ${model.modelId} ${model.provider} ${providerName.get(model.provider) ?? ""}`
 					.toLowerCase()
@@ -89,7 +92,8 @@ export function ModelPicker({
 	}
 	const levels = thinkingLevels(resources, value?.model);
 	const choose = (model: Summary) => {
-		const thinking = value?.thinkingLevel ?? "off";
+		const thinking =
+			resources?.profile === "p2w" ? (p2wModel(model)?.thinkingLevel ?? "off") : (value?.thinkingLevel ?? "off");
 		onChange({
 			model: { provider: model.provider, modelId: model.modelId },
 			thinkingLevel: model.thinkingLevels.includes(thinking) ? thinking : "off",
@@ -118,7 +122,11 @@ export function ModelPicker({
 					/>
 				</label>
 			</div>
-			<p className="muted small">Only models from signed-in providers are shown.</p>
+			<p className="muted small">
+				{resources?.profile === "p2w"
+					? "The five p2w models are listed here. Sign in from Providers before sending."
+					: "Only models from signed-in providers are shown."}
+			</p>
 			<div className="model-list">
 				{[...groups].map(([provider, models]) => (
 					<section key={provider}>
